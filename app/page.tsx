@@ -52,6 +52,7 @@ export default function Home() {
 
   // ---- movimientos ----
   const [monto, setMonto] = useState("");
+const [porcentajeIva, setPorcentajeIva] = useState<0 | 15>(0);
   const [tipo, setTipo] = useState<"INGRESO" | "GASTO">("INGRESO");
   const [saldo, setSaldo] = useState(0);
   const [proveedor, setProveedor] = useState("")
@@ -72,6 +73,7 @@ const gastosList = movimientos.filter(
   const [cliente, setCliente] = useState("");
   const [numeroFactura, setNumeroFactura] = useState("");
   const [montoFactura, setMontoFactura] = useState("");
+  const [porcentajeIvaFactura, setPorcentajeIvaFactura] = useState<0 | 15>(0);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [facturas, setFacturas] = useState<Factura[]>([]);
@@ -137,7 +139,7 @@ if (!tx.error && tx.data) {
     // facturas
     const f = await supabase
       .from("facturas")
-      .select("id,created_at,cliente,monto,estado,pdf_url,fecha")
+      .select("id,created_at,cliente,numero,monto,subtotal,iva,porcentaje_iva,estado,pdf_url,fecha")
       .order("created_at", { ascending: false });
 
     if (!f.error && f.data) setFacturas(f.data as any);
@@ -159,18 +161,37 @@ if (!tx.error && tx.data) {
     })();
   }, []);
 
+  function calcIvaDesdeTotal(total: number, porcentaje: 0 | 15) {
+  if (porcentaje === 0) {
+    return { subtotal: Number(total.toFixed(2)), iva: 0 };
+  }
+  // IVA 15%
+  const subtotal = total / 1.15;
+  const iva = total - subtotal;
+  return { subtotal: Number(subtotal.toFixed(2)), iva: Number(iva.toFixed(2)) };
+}
+
   async function guardarMovimiento() {
     if (!monto) return alert("Pon un monto");
 
-    const { error } = await supabase.from("transactions").insert({
-      amount: parseFloat(monto),
-      description: `${proveedor} - ${detalle}`,
-      area: "GENERAL",
-      account: "BANCO",
-      type: tipo === "INGRESO" ? "VENTA_DIRECTA" : "GASTO",
-      proveedor,
-      detalle,
-    });
+    const total = parseFloat(monto);
+if (Number.isNaN(total) || total <= 0) return alert("Monto inválido");
+
+const { subtotal, iva } = calcIvaDesdeTotal(total, porcentajeIva);
+
+const { error } = await supabase.from("transactions").insert({
+  amount: total, // total final pagado/cobrado
+  subtotal,
+  iva,
+  porcentaje_iva: porcentajeIva,
+
+  description: `${proveedor} - ${detalle}`,
+  area: "GENERAL",
+  account: "BANCO",
+  type: tipo === "INGRESO" ? "VENTA_DIRECTA" : "GASTO",
+  proveedor,
+  detalle,
+});
 
     if (error) alert("Error guardando: " + error.message);
     else {
@@ -240,11 +261,23 @@ console.log("DELETE RESULT:", data);
         .upload(path, pdfFile, { contentType: "application/pdf", upsert: false });
 
       if (upload.error) throw new Error(upload.error.message);
+const totalFactura = parseFloat(montoFactura);
+if (Number.isNaN(totalFactura) || totalFactura <= 0) return alert("Monto inválido");
+
+const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
+  totalFactura,
+  porcentajeIvaFactura
+);
 
       const ins = await supabase.from("facturas").insert({
-  cliente: cliente.trim(),
+    cliente: cliente.trim(),
   numero: numeroFactura.trim(),
-  monto: parseFloat(montoFactura),
+  monto: totalFactura,
+
+  subtotal: subtotalFactura,
+  iva: ivaFactura,
+  porcentaje_iva: porcentajeIvaFactura,
+
   estado: "pendiente",
   pdf_url: path,
   fecha: new Date().toISOString(),
@@ -255,6 +288,7 @@ console.log("DELETE RESULT:", data);
       setCliente("");
       setNumeroFactura("");
       setMontoFactura("");
+      setPorcentajeIvaFactura(0);
       setPdfFile(null);
       setSugerencias([]);
       setMostrarSug(false);
@@ -480,6 +514,14 @@ async function eliminarFactura(f: Factura) {
           </select>
 
           <input placeholder="Monto $" value={monto} onChange={(e) => setMonto(e.target.value)} style={input} />
+          <select
+  value={porcentajeIva}
+  onChange={(e) => setPorcentajeIva(Number(e.target.value) as 0 | 15)}
+  style={input}
+>
+  <option value={0}>IVA 0%</option>
+  <option value={15}>IVA 15%</option>
+</select>
           <input
   placeholder={tipo === "INGRESO" ? "¿Quién pagó?" : "¿A quién se pagó?"}
   value={proveedor}
@@ -558,6 +600,14 @@ async function eliminarFactura(f: Factura) {
 />
 
           <input placeholder="Total $" value={montoFactura} onChange={(e) => setMontoFactura(e.target.value)} style={input} />
+          <select
+  value={porcentajeIvaFactura}
+  onChange={(e) => setPorcentajeIvaFactura(Number(e.target.value) as 0 | 15)}
+  style={input}
+>
+  <option value={0}>IVA 0%</option>
+  <option value={15}>IVA 15%</option>
+</select>
 
           <input type="file" accept="application/pdf" onChange={(e) => setPdfFile(e.target.files?.[0] || null)} style={{ ...input, padding: "10px" }} />
 
