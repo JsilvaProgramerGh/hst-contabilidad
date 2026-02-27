@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import jsPDF from "jspdf";
-import "jspdf-autotable";
 import { supabase } from "./lib/supabase";
 
 type Factura = {
@@ -437,6 +436,7 @@ export default function Home() {
 
       // 3) PDF
       const doc = new jsPDF("p", "mm", "a4");
+      const { default: autoTable } = await import("jspdf-autotable");
       const pageWidth = doc.internal.pageSize.getWidth();
 
       // Logo (opcional, si falla no tumba)
@@ -461,7 +461,7 @@ export default function Home() {
       doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 44);
 
       // Resumen
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: 52,
         head: [["Concepto", "Valor"]],
         body: [
@@ -506,7 +506,7 @@ export default function Home() {
         ];
       });
 
-      (doc as any).autoTable({
+     autoTable(doc, {
         startY: nextY + 3,
         head: [["Fecha", "Tipo", "Detalle", "Total", "Subtotal", "IVA", "%"]],
         body: movimientosBody,
@@ -542,7 +542,7 @@ export default function Home() {
         ];
       });
 
-      (doc as any).autoTable({
+     autoTable(doc, {
         startY: nextY + 3,
         head: [["Fecha", "N°", "Cliente", "Total", "Subtotal", "IVA", "%", "Estado"]],
         body: facturasBody,
