@@ -526,6 +526,7 @@ function dentroDeRango(fechaISO: string, desdeISO: string, hastaISO: string) {
 }
 
 async function generarEstadoCuentaPDF() {
+  alert("Entró a generar PDF ✅");
   // 1) Filtrar datos por rango
   const movFiltrados = movimientos.filter((m) =>
     dentroDeRango(m.created_at, desde, hasta)
