@@ -539,7 +539,16 @@ async function generarEstadoCuentaPDF() {
     // Si 'desde' o 'hasta' no existen, esto también puede romper.
     doc.text(`Periodo: ${String(desde)} a ${String(hasta)}`, 12, 28);
     doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 34);
-
+(doc as any).autoTable({
+  startY: 45,
+  head: [["Concepto", "Valor"]],
+  body: [
+    ["Ingresos", "$100.00"],
+    ["Gastos", "$40.00"],
+    ["Balance", "$60.00"],
+  ],
+  styles: { fontSize: 10 },
+});
     console.log("✅ Antes de doc.save");
     doc.save(`PRUEBA_${String(desde)}_a_${String(hasta)}.pdf`);
     console.log("✅ doc.save ejecutado");
