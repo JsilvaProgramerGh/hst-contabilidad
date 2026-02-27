@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import "jspdf-autotable";
 import { supabase } from "./lib/supabase";
-
-type Txn = { id: string; type: string; amount: number };
 
 type Factura = {
   id: number;
@@ -13,6 +11,9 @@ type Factura = {
   cliente: string;
   numero: string;
   monto: number;
+  subtotal?: number;
+  iva?: number;
+  porcentaje_iva?: number;
   estado: "pendiente" | "parcial" | "pagado";
   pdf_url: string;
   fecha: string;
@@ -27,19 +28,16 @@ type PagoFactura = {
 };
 
 function makeId() {
-  // Compatible con iPhone/Safari: usa crypto.getRandomValues si existe, si no, Math.random
   const g: any = globalThis as any;
 
   if (g.crypto && g.crypto.getRandomValues) {
     const bytes = new Uint8Array(16);
     g.crypto.getRandomValues(bytes);
-    // convierte a hex
     return Array.from(bytes)
       .map((b: number) => b.toString(16).padStart(2, "0"))
       .join("");
   }
 
-  // fallback súper compatible
   return (
     Date.now().toString(16) +
     "-" +
@@ -49,34 +47,64 @@ function makeId() {
   );
 }
 
+function dentroDeRango(fechaISO: string, desdeISO: string, hastaISO: string) {
+  const t = new Date(fechaISO).getTime();
+  const d = new Date(desdeISO + "T00:00:00").getTime();
+  const h = new Date(hastaISO + "T23:59:59").getTime();
+  return t >= d && t <= h;
+}
+
+function calcIvaDesdeTotal(total: number, porcentaje: 0 | 15) {
+  if (porcentaje === 0) {
+    return { subtotal: Number(total.toFixed(2)), iva: 0 };
+  }
+  const subtotal = total / 1.15;
+  const iva = total - subtotal;
+  return { subtotal: Number(subtotal.toFixed(2)), iva: Number(iva.toFixed(2)) };
+}
+
+async function cargarLogoDataUrl(path = "/logo.png"): Promise<string | null> {
+  try {
+    const res = await fetch(path);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+    return dataUrl;
+  } catch {
+    return null;
+  }
+}
+
 export default function Home() {
   const [status, setStatus] = useState("Conectando...");
 
   // ---- movimientos ----
   const [monto, setMonto] = useState("");
-const [porcentajeIva, setPorcentajeIva] = useState<0 | 15>(0);
+  const [porcentajeIva, setPorcentajeIva] = useState<0 | 15>(0);
   const [tipo, setTipo] = useState<"INGRESO" | "GASTO">("INGRESO");
   const [saldo, setSaldo] = useState(0);
-  const [proveedor, setProveedor] = useState("")
-const [detalle, setDetalle] = useState("")
+  const [proveedor, setProveedor] = useState("");
+  const [detalle, setDetalle] = useState("");
   const [ingresos, setIngresos] = useState(0);
   const [gastos, setGastos] = useState(0);
-const [movimientos, setMovimientos] = useState<any[]>([]);
-const hoyISO = new Date().toISOString().slice(0, 10);
-const primerDiaMesISO = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-  .toISOString()
-  .slice(0, 10);
+  const [movimientos, setMovimientos] = useState<any[]>([]);
 
-const [desde, setDesde] = useState(primerDiaMesISO);
-const [hasta, setHasta] = useState(hoyISO);
-const ADMIN_PASSWORD = "1234";
-const ingresosList = movimientos.filter(
-  (m) => m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
-);
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const primerDiaMesISO = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+    .toISOString()
+    .slice(0, 10);
 
-const gastosList = movimientos.filter(
-  (m) => m.type === "GASTO" || m.type === "COMPRA"
-);
+  const [desde, setDesde] = useState(primerDiaMesISO);
+  const [hasta, setHasta] = useState(hoyISO);
+
+  const ADMIN_PASSWORD = "1234";
 
   // ---- facturas ----
   const [cliente, setCliente] = useState("");
@@ -95,7 +123,6 @@ const gastosList = movimientos.filter(
   const [sugerencias, setSugerencias] = useState<string[]>([]);
   const [mostrarSug, setMostrarSug] = useState(false);
 
-  // Mapa: factura_id -> total pagado
   const pagadoPorFactura = useMemo(() => {
     const m = new Map<number, number>();
     pagos.forEach((p) => {
@@ -104,7 +131,6 @@ const gastosList = movimientos.filter(
     return m;
   }, [pagos]);
 
-  // Por cobrar = suma (monto - pagado) de facturas no pagadas
   const porCobrar = useMemo(() => {
     return facturas.reduce((acc, f) => {
       const pagado = pagadoPorFactura.get(f.id) || 0;
@@ -116,34 +142,32 @@ const gastosList = movimientos.filter(
 
   async function cargarDatos() {
     // movimientos
-const tx = await supabase
-  .from("transactions")
-  .select("*")
-  .order("created_at", { ascending: false });
+    const tx = await supabase
+      .from("transactions")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-if (!tx.error && tx.data) {
+    if (!tx.error && tx.data) {
+      setMovimientos(tx.data);
 
-  // 🔹 Guardamos los movimientos para el historial
-  setMovimientos(tx.data);
+      let total = 0;
+      let ing = 0;
+      let gas = 0;
 
-  let total = 0;
-  let ing = 0;
-  let gas = 0;
+      tx.data.forEach((t: any) => {
+        if (t.type === "VENTA_DIRECTA" || t.type === "PAGO_FACTURA") {
+          total += Number(t.amount);
+          ing += Number(t.amount);
+        } else {
+          total -= Number(t.amount);
+          gas += Number(t.amount);
+        }
+      });
 
-  tx.data.forEach((t: any) => {
-    if (t.type === "VENTA_DIRECTA" || t.type === "PAGO_FACTURA") {
-      total += Number(t.amount);
-      ing += Number(t.amount);
-    } else {
-      total -= Number(t.amount);
-      gas += Number(t.amount);
+      setSaldo(total);
+      setIngresos(ing);
+      setGastos(gas);
     }
-  });
-
-  setSaldo(total);
-  setIngresos(ing);
-  setGastos(gas);
-}
 
     // facturas
     const f = await supabase
@@ -170,69 +194,47 @@ if (!tx.error && tx.data) {
     })();
   }, []);
 
-  function calcIvaDesdeTotal(total: number, porcentaje: 0 | 15) {
-  if (porcentaje === 0) {
-    return { subtotal: Number(total.toFixed(2)), iva: 0 };
-  }
-  // IVA 15%
-  const subtotal = total / 1.15;
-  const iva = total - subtotal;
-  return { subtotal: Number(subtotal.toFixed(2)), iva: Number(iva.toFixed(2)) };
-}
-
   async function guardarMovimiento() {
     if (!monto) return alert("Pon un monto");
 
     const total = parseFloat(monto);
-if (Number.isNaN(total) || total <= 0) return alert("Monto inválido");
+    if (Number.isNaN(total) || total <= 0) return alert("Monto inválido");
 
-const { subtotal, iva } = calcIvaDesdeTotal(total, porcentajeIva);
+    const { subtotal, iva } = calcIvaDesdeTotal(total, porcentajeIva);
 
-const { error } = await supabase.from("transactions").insert({
-  amount: total, // total final pagado/cobrado
-  subtotal,
-  iva,
-  porcentaje_iva: porcentajeIva,
-
-  description: `${proveedor} - ${detalle}`,
-  area: "GENERAL",
-  account: "BANCO",
-  type: tipo === "INGRESO" ? "VENTA_DIRECTA" : "GASTO",
-  proveedor,
-  detalle,
-});
+    const { error } = await supabase.from("transactions").insert({
+      amount: total,
+      subtotal,
+      iva,
+      porcentaje_iva: porcentajeIva,
+      description: `${proveedor} - ${detalle}`,
+      area: "GENERAL",
+      account: "BANCO",
+      type: tipo === "INGRESO" ? "VENTA_DIRECTA" : "GASTO",
+      proveedor,
+      detalle,
+    });
 
     if (error) alert("Error guardando: " + error.message);
     else {
       setMonto("");
+      setProveedor("");
+      setDetalle("");
       await cargarDatos();
     }
   }
-  
 
-const eliminarMovimiento = async (id: string) => {
-  const pass = prompt("Ingrese contraseña para eliminar:");
+  const eliminarMovimiento = async (id: string) => {
+    const pass = prompt("Ingrese contraseña para eliminar:");
+    if (pass !== ADMIN_PASSWORD) return alert("Contraseña incorrecta");
 
-  if (pass !== ADMIN_PASSWORD) {
-    alert("Contraseña incorrecta");
-    return;
-  }
-
-  const { data, error } = await supabase
-  .from("transactions")
-  .delete()
-  .eq("id", id)
-  .select();
-
-console.log("DELETE RESULT:", data);
-
-  if (error) {
-    alert("Error eliminando: " + error.message);
-  } else {
-    alert("Movimiento eliminado");
-    await cargarDatos();
-  }
-};
+    const { error } = await supabase.from("transactions").delete().eq("id", id);
+    if (error) alert("Error eliminando: " + error.message);
+    else {
+      alert("Movimiento eliminado");
+      await cargarDatos();
+    }
+  };
 
   async function buscarClientes(q: string) {
     const query = q.trim();
@@ -270,27 +272,26 @@ console.log("DELETE RESULT:", data);
         .upload(path, pdfFile, { contentType: "application/pdf", upsert: false });
 
       if (upload.error) throw new Error(upload.error.message);
-const totalFactura = parseFloat(montoFactura);
-if (Number.isNaN(totalFactura) || totalFactura <= 0) return alert("Monto inválido");
 
-const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
-  totalFactura,
-  porcentajeIvaFactura
-);
+      const totalFactura = parseFloat(montoFactura);
+      if (Number.isNaN(totalFactura) || totalFactura <= 0) return alert("Monto inválido");
+
+      const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
+        totalFactura,
+        porcentajeIvaFactura
+      );
 
       const ins = await supabase.from("facturas").insert({
-    cliente: cliente.trim(),
-  numero: numeroFactura.trim(),
-  monto: totalFactura,
-
-  subtotal: subtotalFactura,
-  iva: ivaFactura,
-  porcentaje_iva: porcentajeIvaFactura,
-
-  estado: "pendiente",
-  pdf_url: path,
-  fecha: new Date().toISOString(),
-});
+        cliente: cliente.trim(),
+        numero: numeroFactura.trim(),
+        monto: totalFactura,
+        subtotal: subtotalFactura,
+        iva: ivaFactura,
+        porcentaje_iva: porcentajeIvaFactura,
+        estado: "pendiente",
+        pdf_url: path,
+        fecha: new Date().toISOString(),
+      });
 
       if (ins.error) throw new Error(ins.error.message);
 
@@ -312,15 +313,10 @@ const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
   }
 
   async function verPdf(path: string) {
-  const signed = await supabase.storage
-    .from("invoices")
-    .createSignedUrl(path, 60 * 10);
-
-  if (signed.error) return alert("No pude abrir el PDF: " + signed.error.message);
-
-  // ✅ funciona en celular (sin popups)
-  window.location.href = signed.data.signedUrl;
-}
+    const signed = await supabase.storage.from("invoices").createSignedUrl(path, 60 * 10);
+    if (signed.error) return alert("No pude abrir el PDF: " + signed.error.message);
+    window.location.href = signed.data.signedUrl;
+  }
 
   function restanteFactura(f: Factura) {
     const pagado = pagadoPorFactura.get(f.id) || 0;
@@ -328,70 +324,13 @@ const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
   }
 
   async function registrarPago(f: Factura) {
-    async function eliminarFactura(f: Factura) {
-      async function editarMontoFactura(f: Factura) {
-  const nuevo = prompt(
-    `Monto actual: $${f.monto}\nIngrese nuevo monto:`,
-    f.monto.toString()
-  );
-
-  if (!nuevo) return;
-
-  const valor = Number(nuevo);
-  if (isNaN(valor) || valor <= 0) {
-    alert("Monto inválido");
-    return;
-  }
-
-  const { error } = await supabase
-    .from("facturas")
-    .update({ monto: valor })
-    .eq("id", f.id);
-
-  if (error) {
-    alert("Error actualizando: " + error.message);
-  } else {
-    alert("Monto actualizado");
-    await cargarDatos();
-  }
-}
-  const pass = prompt("Ingrese contraseña para eliminar factura:");
-
-  if (pass !== ADMIN_PASSWORD) {
-    alert("Contraseña incorrecta");
-    return;
-  }
-
-  const confirmacion = confirm(
-    `¿Seguro que deseas eliminar la factura ${f.numero}?`
-  );
-
-  if (!confirmacion) return;
-
-  // eliminar pagos relacionados
-  await supabase
-    .from("pagos_factura")
-    .delete()
-    .eq("factura_id", f.id);
-
-  // eliminar factura
-  const { error } = await supabase
-    .from("facturas")
-    .delete()
-    .eq("id", f.id);
-
-  if (error) {
-    alert("Error eliminando: " + error.message);
-  } else {
-    alert("Factura eliminada");
-    await cargarDatos();
-  }
-}
     const restante = restanteFactura(f);
     if (restante <= 0) return alert("Esa factura ya está pagada.");
 
     const valor = prompt(
-      `Registrar pago parcial\nCliente: ${f.cliente}\nRestante: $${restante.toFixed(2)}\n\n¿Cuánto pagó hoy?`,
+      `Registrar pago parcial\nCliente: ${f.cliente}\nRestante: $${restante.toFixed(
+        2
+      )}\n\n¿Cuánto pagó hoy?`,
       restante.toFixed(2)
     );
 
@@ -401,7 +340,6 @@ const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
     if (Number.isNaN(pago) || pago <= 0) return alert("Monto inválido");
     if (pago > restante) return alert("Ese pago es mayor que el restante");
 
-    // 1) insertar pago en pagos_factura
     const ins = await supabase.from("pagos_factura").insert({
       factura_id: f.id,
       monto: pago,
@@ -410,7 +348,6 @@ const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
 
     if (ins.error) return alert("Error registrando pago: " + ins.error.message);
 
-    // 2) registrar ingreso en transactions
     const tx = await supabase.from("transactions").insert({
       amount: pago,
       description: `Pago factura #${f.id} - ${f.cliente}`,
@@ -421,20 +358,12 @@ const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
 
     if (tx.error) return alert("Error creando movimiento: " + tx.error.message);
 
-    // 3) recalcular estado y actualizar factura
-    await cargarDatos(); // trae pagos actualizados
+    await cargarDatos();
 
-    // calculamos nuevo restante con datos ya refrescados
     const nuevoRestante = Math.max(0, restante - pago);
+    const nuevoEstado: Factura["estado"] = nuevoRestante <= 0 ? "pagado" : "parcial";
 
-    const nuevoEstado: Factura["estado"] =
-      nuevoRestante <= 0 ? "pagado" : "parcial";
-
-    const up = await supabase
-      .from("facturas")
-      .update({ estado: nuevoEstado })
-      .eq("id", f.id);
-
+    const up = await supabase.from("facturas").update({ estado: nuevoEstado }).eq("id", f.id);
     if (up.error) return alert("Error actualizando estado: " + up.error.message);
 
     await cargarDatos();
@@ -442,135 +371,231 @@ const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
   }
 
   async function editarMontoFactura(f: Factura) {
-  const nuevo = prompt(
-    `Monto actual: $${f.monto}\nIngrese nuevo monto:`,
-    f.monto.toString()
-  );
+    const nuevo = prompt(`Monto actual: $${f.monto}\nIngrese nuevo monto:`, f.monto.toString());
+    if (!nuevo) return;
 
-  if (!nuevo) return;
+    const valor = Number(nuevo);
+    if (isNaN(valor) || valor <= 0) return alert("Monto inválido");
 
-  const valor = Number(nuevo);
-  if (isNaN(valor) || valor <= 0) {
-    alert("Monto inválido");
-    return;
+    const { error } = await supabase.from("facturas").update({ monto: valor }).eq("id", f.id);
+
+    if (error) alert("Error actualizando: " + error.message);
+    else {
+      alert("Monto actualizado");
+      await cargarDatos();
+    }
   }
 
-  const { error } = await supabase
-    .from("facturas")
-    .update({ monto: valor })
-    .eq("id", f.id);
+  async function eliminarFactura(f: Factura) {
+    const pass = prompt("Ingrese contraseña para eliminar factura:");
+    if (pass !== ADMIN_PASSWORD) return alert("Contraseña incorrecta");
 
-  if (error) {
-    alert("Error actualizando: " + error.message);
-  } else {
-    alert("Monto actualizado");
-    await cargarDatos();
-  }
-}
+    const confirmacion = confirm(`¿Seguro que deseas eliminar la factura ${f.numero}?`);
+    if (!confirmacion) return;
 
-async function eliminarFactura(f: Factura) {
-  const pass = prompt("Ingrese contraseña para eliminar factura:");
+    await supabase.from("pagos_factura").delete().eq("factura_id", f.id);
 
-  if (pass !== ADMIN_PASSWORD) {
-    alert("Contraseña incorrecta");
-    return;
+    const { error } = await supabase.from("facturas").delete().eq("id", f.id);
+
+    if (error) alert("Error eliminando: " + error.message);
+    else {
+      alert("Factura eliminada");
+      await cargarDatos();
+    }
   }
 
-  const confirmacion = confirm(
-    `¿Seguro que deseas eliminar la factura ${f.numero}?`
-  );
+  async function generarEstadoCuentaPDF() {
+    console.log("✅ Entró a generar PDF");
 
-  if (!confirmacion) return;
+    try {
+      // 1) Filtrar por rango (movimientos y facturas)
+      const movFiltrados = movimientos.filter((m) =>
+        dentroDeRango(m.created_at, desde, hasta)
+      );
 
-  await supabase
-    .from("pagos_factura")
-    .delete()
-    .eq("factura_id", f.id);
+      const facFiltradas = facturas.filter((f) =>
+        dentroDeRango(f.fecha || f.created_at, desde, hasta)
+      );
 
-  const { error } = await supabase
-    .from("facturas")
-    .delete()
-    .eq("id", f.id);
+      // 2) Totales
+      const ingresosMov = movFiltrados
+        .filter((m) => m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA")
+        .reduce((acc, m) => acc + Number(m.amount || 0), 0);
 
-  if (error) {
-    alert("Error eliminando: " + error.message);
-  } else {
-    alert("Factura eliminada");
-    await cargarDatos();
+      const gastosMov = movFiltrados
+        .filter((m) => m.type === "GASTO" || m.type === "COMPRA")
+        .reduce((acc, m) => acc + Number(m.amount || 0), 0);
+
+      const ivaPagado = movFiltrados
+        .filter((m) => m.type === "GASTO" || m.type === "COMPRA")
+        .reduce((acc, m) => acc + Number(m.iva || 0), 0);
+
+      const ivaGenerado = facFiltradas.reduce((acc, f) => acc + Number(f.iva || 0), 0);
+
+      const balance = ingresosMov - gastosMov;
+      const ivaPorPagar = ivaGenerado - ivaPagado;
+
+      // 3) PDF
+      const doc = new jsPDF("p", "mm", "a4");
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      // Logo (opcional, si falla no tumba)
+      const logo = await cargarLogoDataUrl("/logo.png");
+      if (logo) {
+        try {
+          doc.addImage(logo, "PNG", 12, 10, 22, 22);
+        } catch {
+          // si el logo no es PNG real, ignoramos
+        }
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("HST CONTABILIDAD", logo ? 38 : 12, 18);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text("Estado de Cuenta", logo ? 38 : 12, 24);
+
+      doc.text(`Periodo: ${desde} a ${hasta}`, 12, 38);
+      doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 44);
+
+      // Resumen
+      (doc as any).autoTable({
+        startY: 52,
+        head: [["Concepto", "Valor"]],
+        body: [
+          ["Ingresos (movimientos)", `$${ingresosMov.toFixed(2)}`],
+          ["Gastos (movimientos)", `$${gastosMov.toFixed(2)}`],
+          ["Balance", `$${balance.toFixed(2)}`],
+          ["IVA generado (facturas)", `$${ivaGenerado.toFixed(2)}`],
+          ["IVA pagado (gastos)", `$${ivaPagado.toFixed(2)}`],
+          ["IVA por pagar (aprox.)", `$${ivaPorPagar.toFixed(2)}`],
+        ],
+        styles: { fontSize: 9 },
+        margin: { left: 12, right: 12 },
+        tableWidth: pageWidth - 24,
+      });
+
+      let nextY =
+        (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : 90;
+
+      // Tabla Movimientos
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text("Movimientos", 12, nextY);
+      nextY += 4;
+
+      const movimientosBody = movFiltrados.map((m) => {
+        const fecha = new Date(m.created_at).toLocaleString();
+        const tipoTxt =
+          m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "Ingreso" : "Gasto";
+        const total = Number(m.amount || 0);
+        const subtotal = Number(m.subtotal || 0);
+        const iva = Number(m.iva || 0);
+        const pct = Number(m.porcentaje_iva || 0);
+
+        return [
+          fecha,
+          tipoTxt,
+          String(m.description || ""),
+          `$${total.toFixed(2)}`,
+          `$${subtotal.toFixed(2)}`,
+          `$${iva.toFixed(2)}`,
+          `${pct}%`,
+        ];
+      });
+
+      (doc as any).autoTable({
+        startY: nextY + 3,
+        head: [["Fecha", "Tipo", "Detalle", "Total", "Subtotal", "IVA", "%"]],
+        body: movimientosBody,
+        styles: { fontSize: 8 },
+        margin: { left: 12, right: 12 },
+        tableWidth: pageWidth - 24,
+      });
+
+      nextY =
+        (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : nextY + 40;
+
+      // Tabla Facturas
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text("Facturas", 12, nextY);
+
+      const facturasBody = facFiltradas.map((f) => {
+        const fecha = new Date(f.fecha || f.created_at).toLocaleDateString();
+        const total = Number(f.monto || 0);
+        const subtotal = Number(f.subtotal || 0);
+        const iva = Number(f.iva || 0);
+        const pct = Number(f.porcentaje_iva || 0);
+
+        return [
+          fecha,
+          String(f.numero || ""),
+          String(f.cliente || ""),
+          `$${total.toFixed(2)}`,
+          `$${subtotal.toFixed(2)}`,
+          `$${iva.toFixed(2)}`,
+          `${pct}%`,
+          String(f.estado || ""),
+        ];
+      });
+
+      (doc as any).autoTable({
+        startY: nextY + 3,
+        head: [["Fecha", "N°", "Cliente", "Total", "Subtotal", "IVA", "%", "Estado"]],
+        body: facturasBody,
+        styles: { fontSize: 8 },
+        margin: { left: 12, right: 12 },
+        tableWidth: pageWidth - 24,
+      });
+
+      doc.save(`HST_EstadoCuenta_${desde}_a_${hasta}.pdf`);
+      console.log("✅ doc.save ejecutado");
+    } catch (err) {
+      console.error("❌ Error generando PDF:", err);
+      alert("❌ Error generando PDF. Abre la consola (F12) y mira el error.");
+    }
   }
-}
-async function cargarLogoDataUrl(path = "/logo.png"): Promise<string | null> {
-  try {
-    const res = await fetch(path);
-    if (!res.ok) return null;
-    const blob = await res.blob();
 
-    const dataUrl: string = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-
-    return dataUrl;
-  } catch {
-    return null;
-  }
-}
-
-function dentroDeRango(fechaISO: string, desdeISO: string, hastaISO: string) {
-  const t = new Date(fechaISO).getTime();
-  const d = new Date(desdeISO + "T00:00:00").getTime();
-  const h = new Date(hastaISO + "T23:59:59").getTime();
-  return t >= d && t <= h;
-}
-
-async function generarEstadoCuentaPDF() {
-  console.log("✅ Entró a generar PDF");
-  try {
-    const doc = new jsPDF("p", "mm", "a4");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("HST CONTABILIDAD - PRUEBA PDF", 12, 20);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-
-    // Si 'desde' o 'hasta' no existen, esto también puede romper.
-    doc.text(`Periodo: ${String(desde)} a ${String(hasta)}`, 12, 28);
-    doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 34);
-(doc as any).autoTable({
-  startY: 45,
-  head: [["Concepto", "Valor"]],
-  body: [
-    ["Ingresos", "$100.00"],
-    ["Gastos", "$40.00"],
-    ["Balance", "$60.00"],
-  ],
-  styles: { fontSize: 10 },
-});
-    console.log("✅ Antes de doc.save");
-    doc.save(`PRUEBA_${String(desde)}_a_${String(hasta)}.pdf`);
-    console.log("✅ doc.save ejecutado");
-  } catch (err) {
-    console.error("❌ Error generando PDF:", err);
-    alert("❌ Error generando PDF. Abre la consola (F12) y mira el error.");
-  }
-}
   return (
-    <main style={{ backgroundColor: "#0b0b0b", color: "#d4af37", minHeight: "100vh", padding: "40px", fontFamily: "Arial" }}>
+    <main
+      style={{
+        backgroundColor: "#0b0b0b",
+        color: "#d4af37",
+        minHeight: "100vh",
+        padding: "40px",
+        fontFamily: "Arial",
+      }}
+    >
       <h1 style={{ fontSize: "48px" }}>HST CONTABILIDAD</h1>
       <p style={{ color: "#aaa" }}>Panel financiero Julian Silva</p>
       <p style={{ color: "#00ff88" }}>{status}</p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "20px", marginTop: "20px" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+          gap: "20px",
+          marginTop: "20px",
+        }}
+      >
         <Card title="💰 Saldo total" value={`$${saldo.toFixed(2)}`} />
         <Card title="📈 Ingresos" value={`$${ingresos.toFixed(2)}`} />
         <Card title="📉 Gastos" value={`$${gastos.toFixed(2)}`} />
         <Card title="🧾 Por cobrar" value={`$${porCobrar.toFixed(2)}`} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(360px,1fr))", gap: "20px", marginTop: "30px", alignItems: "start" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit,minmax(360px,1fr))",
+          gap: "20px",
+          marginTop: "30px",
+          alignItems: "start",
+        }}
+      >
         <section style={panel}>
           <h2 style={{ marginTop: 0 }}>Nuevo movimiento</h2>
 
@@ -580,30 +605,36 @@ async function generarEstadoCuentaPDF() {
           </select>
 
           <input placeholder="Monto $" value={monto} onChange={(e) => setMonto(e.target.value)} style={input} />
+
           <select
-  value={porcentajeIva}
-  onChange={(e) => setPorcentajeIva(Number(e.target.value) as 0 | 15)}
-  style={input}
->
-  <option value={0}>IVA 0%</option>
-  <option value={15}>IVA 15%</option>
-</select>
+            value={porcentajeIva}
+            onChange={(e) => setPorcentajeIva(Number(e.target.value) as 0 | 15)}
+            style={input}
+          >
+            <option value={0}>IVA 0%</option>
+            <option value={15}>IVA 15%</option>
+          </select>
+
           <input
-  placeholder={tipo === "INGRESO" ? "¿Quién pagó?" : "¿A quién se pagó?"}
-  value={proveedor}
-  onChange={(e) => setProveedor(e.target.value)}
-  style={input}
-/>
+            placeholder={tipo === "INGRESO" ? "¿Quién pagó?" : "¿A quién se pagó?"}
+            value={proveedor}
+            onChange={(e) => setProveedor(e.target.value)}
+            style={input}
+          />
 
-<input
-  placeholder="Concepto / Descripción"
-  value={detalle}
-  onChange={(e) => setDetalle(e.target.value)}
-  style={input}
-/>
+          <input
+            placeholder="Concepto / Descripción"
+            value={detalle}
+            onChange={(e) => setDetalle(e.target.value)}
+            style={input}
+          />
 
-          <button onClick={guardarMovimiento} style={btnGold}>GUARDAR MOVIMIENTO</button>
-          <button onClick={cargarDatos} style={btnGhost}>🔄 Actualizar panel</button>
+          <button onClick={guardarMovimiento} style={btnGold}>
+            GUARDAR MOVIMIENTO
+          </button>
+          <button onClick={cargarDatos} style={btnGhost}>
+            🔄 Actualizar panel
+          </button>
         </section>
 
         <section style={panel}>
@@ -625,17 +656,19 @@ async function generarEstadoCuentaPDF() {
             />
 
             {mostrarSug && sugerencias.length > 0 && (
-              <div style={{
-                position: "absolute",
-                top: 52,
-                left: 0,
-                right: 0,
-                background: "#0f0f0f",
-                border: "1px solid #2a2a2a",
-                borderRadius: 10,
-                overflow: "hidden",
-                zIndex: 10
-              }}>
+              <div
+                style={{
+                  position: "absolute",
+                  top: 52,
+                  left: 0,
+                  right: 0,
+                  background: "#0f0f0f",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: 10,
+                  overflow: "hidden",
+                  zIndex: 10,
+                }}
+              >
                 {sugerencias.map((s) => (
                   <div
                     key={s}
@@ -648,7 +681,7 @@ async function generarEstadoCuentaPDF() {
                       padding: "10px 12px",
                       cursor: "pointer",
                       color: "#fff",
-                      borderTop: "1px solid #1f1f1f"
+                      borderTop: "1px solid #1f1f1f",
                     }}
                   >
                     {s}
@@ -659,23 +692,34 @@ async function generarEstadoCuentaPDF() {
           </div>
 
           <input
-  placeholder="Número de factura"
-  value={numeroFactura}
-  onChange={(e) => setNumeroFactura(e.target.value)}
-  style={input}
-/>
+            placeholder="Número de factura"
+            value={numeroFactura}
+            onChange={(e) => setNumeroFactura(e.target.value)}
+            style={input}
+          />
 
-          <input placeholder="Total $" value={montoFactura} onChange={(e) => setMontoFactura(e.target.value)} style={input} />
+          <input
+            placeholder="Total $"
+            value={montoFactura}
+            onChange={(e) => setMontoFactura(e.target.value)}
+            style={input}
+          />
+
           <select
-  value={porcentajeIvaFactura}
-  onChange={(e) => setPorcentajeIvaFactura(Number(e.target.value) as 0 | 15)}
-  style={input}
->
-  <option value={0}>IVA 0%</option>
-  <option value={15}>IVA 15%</option>
-</select>
+            value={porcentajeIvaFactura}
+            onChange={(e) => setPorcentajeIvaFactura(Number(e.target.value) as 0 | 15)}
+            style={input}
+          >
+            <option value={0}>IVA 0%</option>
+            <option value={15}>IVA 15%</option>
+          </select>
 
-          <input type="file" accept="application/pdf" onChange={(e) => setPdfFile(e.target.files?.[0] || null)} style={{ ...input, padding: "10px" }} />
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+            style={{ ...input, padding: "10px" }}
+          />
 
           <button onClick={crearFactura} style={btnGold} disabled={subiendo}>
             {subiendo ? "SUBIENDO..." : "CREAR FACTURA"}
@@ -686,85 +730,90 @@ async function generarEstadoCuentaPDF() {
           </p>
         </section>
       </div>
+
+      {/* HISTORIAL (ÚNICO - quitamos duplicados) */}
       <section style={{ ...panel, marginTop: 30 }}>
-  <h2 style={{ marginTop: 0 }}>📜 Historial General</h2>
-  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-  <div style={{ flex: "1 1 180px" }}>
-    <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Desde</div>
-    <input
-      type="date"
-      value={desde}
-      onChange={(e) => setDesde(e.target.value)}
-      style={input}
-    />
-  </div>
+        <h2 style={{ marginTop: 0 }}>📜 Historial General</h2>
 
-  <div style={{ flex: "1 1 180px" }}>
-    <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Hasta</div>
-    <input
-      type="date"
-      value={hasta}
-      onChange={(e) => setHasta(e.target.value)}
-      style={input}
-    />
-  </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ flex: "1 1 180px" }}>
+            <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Desde</div>
+            <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} style={input} />
+          </div>
 
-  <div style={{ flex: "1 1 220px", display: "flex", alignItems: "end" }}>
-    <button style={btnGold} onClick={generarEstadoCuentaPDF}>
-      🧾 Descargar PDF (Estado de Cuenta)
-    </button>
-  </div>
-</div>
+          <div style={{ flex: "1 1 180px" }}>
+            <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Hasta</div>
+            <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} style={input} />
+          </div>
 
-  {movimientos.length === 0 ? (
-    <p style={{ color: "#aaa" }}>No hay movimientos registrados.</p>
-  ) : (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", color: "#eee" }}>
-        <thead>
-          <tr>
-            <th style={th}>Fecha</th>
-            <th style={th}>Tipo</th>
-            <th style={th}>Monto</th>
-            <th style={th}>Detalle</th>
-            <th style={th}>Acción</th>
-          </tr>
-        </thead>
-        <tbody>
-          {movimientos.map((m) => (
-            <tr key={m.id} style={{ borderTop: "1px solid #2a2a2a" }}>
-              <td style={td}>
-                {new Date(m.created_at).toLocaleString()}
-              </td>
-              <td style={td}>
-                {m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
-                  ? "Ingreso"
-                  : "Gasto"}
-              </td>
-              
-              
-              <td style={td}>
-  <span
-    style={{
-      color:
-        m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
-          ? "#00ff88"
-          : "#ff4d4d",
-      fontWeight: 700
-    }}
-  >
-    ${Number(m.amount).toFixed(2)}
-  </span>
-</td>
-              <td style={td}>{m.description}</td>
-              
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )}
-</section>
+          <div style={{ flex: "1 1 260px", display: "flex", alignItems: "end" }}>
+            <button style={btnGold} onClick={generarEstadoCuentaPDF}>
+              🧾 Descargar PDF (Estado de Cuenta)
+            </button>
+          </div>
+        </div>
+
+        {movimientos.length === 0 ? (
+          <p style={{ color: "#aaa" }}>No hay movimientos registrados.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", color: "#eee" }}>
+              <thead>
+                <tr>
+                  <th style={th}>Fecha</th>
+                  <th style={th}>Tipo</th>
+                  <th style={th}>Monto</th>
+                  <th style={th}>Detalle</th>
+                  <th style={th}>Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movimientos.map((m) => (
+                  <tr key={m.id} style={{ borderTop: "1px solid #2a2a2a" }}>
+                    <td style={td}>{new Date(m.created_at).toLocaleString()}</td>
+
+                    <td style={td}>
+                      {m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "Ingreso" : "Gasto"}
+                    </td>
+
+                    <td style={td}>
+                      <span
+                        style={{
+                          color:
+                            m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
+                              ? "#00ff88"
+                              : "#ff4d4d",
+                          fontWeight: 700,
+                        }}
+                      >
+                        ${Number(m.amount).toFixed(2)}
+                      </span>
+                    </td>
+
+                    <td style={td}>{m.description}</td>
+
+                    <td style={td}>
+                      <button
+                        onClick={() => eliminarMovimiento(m.id)}
+                        style={{
+                          background: "#300",
+                          color: "#ff4d4d",
+                          border: "1px solid #ff4d4d",
+                          padding: "4px 8px",
+                          borderRadius: 6,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Eliminar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <section style={{ ...panel, marginTop: 20 }}>
         <h2 style={{ marginTop: 0 }}>Listado de facturas</h2>
@@ -790,53 +839,43 @@ async function generarEstadoCuentaPDF() {
                 {facturas.map((f) => {
                   const pagado = pagadoPorFactura.get(f.id) || 0;
                   const rest = Math.max(0, Number(f.monto) - pagado);
+
                   return (
                     <tr key={f.id} style={{ borderTop: "1px solid #2a2a2a" }}>
-                      <td style={td}>{new Date(f.fecha).toLocaleDateString()}</td>
+                      <td style={td}>{new Date(f.fecha || f.created_at).toLocaleDateString()}</td>
                       <td style={td}>{f.cliente}</td>
                       <td style={td}>{f.numero}</td>
                       <td style={td}>${Number(f.monto).toFixed(2)}</td>
                       <td style={td}>${pagado.toFixed(2)}</td>
                       <td style={td}>${rest.toFixed(2)}</td>
                       <td style={td}>{f.estado}</td>
+
                       <td style={td}>
-  <button
-    style={btnMini}
-    onClick={() => verPdf(f.pdf_url)}
-  >
-    Ver PDF
-  </button>{" "}
+                        <button style={btnMini} onClick={() => verPdf(f.pdf_url)}>
+                          Ver PDF
+                        </button>{" "}
 
-  <button
-    style={btnMini}
-    onClick={() => editarMontoFactura(f)}
-  >
-    Editar monto
-  </button>{" "}
+                        <button style={btnMini} onClick={() => editarMontoFactura(f)}>
+                          Editar monto
+                        </button>{" "}
 
-  {rest > 0 && (
-    <button
-      style={btnMiniGhost}
-      onClick={() => registrarPago(f)}
-    >
-      Registrar pago
-    </button>
-  )}{" "}
+                        {rest > 0 && (
+                          <button style={btnMiniGhost} onClick={() => registrarPago(f)}>
+                            Registrar pago
+                          </button>
+                        )}{" "}
 
-  <button
-    style={btnMiniGhost}
-    onClick={() => setVerPagosDe(f)}
-  >
-    Ver pagos
-  </button>{" "}
+                        <button style={btnMiniGhost} onClick={() => setVerPagosDe(f)}>
+                          Ver pagos
+                        </button>{" "}
 
-  <button
-    style={{ ...btnMiniGhost, color: "#ff4d4d", borderColor: "#ff4d4d" }}
-    onClick={() => eliminarFactura(f)}
-  >
-    Eliminar
-  </button>
-</td>
+                        <button
+                          style={{ ...btnMiniGhost, color: "#ff4d4d", borderColor: "#ff4d4d" }}
+                          onClick={() => eliminarFactura(f)}
+                        >
+                          Eliminar
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -851,10 +890,13 @@ async function generarEstadoCuentaPDF() {
           <h2 style={{ marginTop: 0 }}>
             Pagos de: {verPagosDe.cliente} (Factura #{verPagosDe.id})
           </h2>
-          <button style={btnGhost} onClick={() => setVerPagosDe(null)}>Cerrar</button>
+
+          <button style={btnGhost} onClick={() => setVerPagosDe(null)}>
+            Cerrar
+          </button>
 
           <div style={{ marginTop: 10 }}>
-            {pagos.filter(p => p.factura_id === verPagosDe.id).length === 0 ? (
+            {pagos.filter((p) => p.factura_id === verPagosDe.id).length === 0 ? (
               <p style={{ color: "#aaa" }}>Aún no hay pagos.</p>
             ) : (
               <ul style={{ color: "#eee" }}>
@@ -870,99 +912,6 @@ async function generarEstadoCuentaPDF() {
           </div>
         </section>
       )}
-      <section style={{ ...panel, marginTop: 20 }}>
-  <h2 style={{ marginTop: 0 }}>Historial General</h2>
-<div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-  <div style={{ flex: "1 1 180px" }}>
-    <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Desde</div>
-    <input
-      type="date"
-      value={desde}
-      onChange={(e) => setDesde(e.target.value)}
-      style={input}
-    />
-  </div>
-
-  <div style={{ flex: "1 1 180px" }}>
-    <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Hasta</div>
-    <input
-      type="date"
-      value={hasta}
-      onChange={(e) => setHasta(e.target.value)}
-      style={input}
-    />
-  </div>
-
-  <div style={{ flex: "1 1 260px", display: "flex", alignItems: "end" }}>
-    <button style={btnGold} onClick={generarEstadoCuentaPDF}>
-      🧾 Descargar PDF (Estado de Cuenta)
-    </button>
-  </div>
-</div>
-  {movimientos.length === 0 ? (
-    <p style={{ color: "#aaa" }}>No hay movimientos.</p>
-  ) : (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", color: "#eee" }}>
-        <thead>
-          <tr>
-            <th style={th}>Fecha</th>
-            <th style={th}>Tipo</th>
-            <th style={th}>Monto</th>
-            <th style={th}>Acción</th>
-          </tr>
-        </thead>
-        <tbody>
-          {movimientos.map((m) => (
-            <tr key={m.id} style={{ borderTop: "1px solid #2a2a2a" }}>
-              <td style={td}>
-                {new Date(m.created_at).toLocaleString()}
-              </td>
-
-              <td style={td}>
-                {m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
-                  ? "Ingreso"
-                  : "Gasto"}
-              </td>
-
-              <td style={td}>
-                <span
-                  style={{
-                    color:
-                      m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
-                        ? "#00ff88"
-                        : "#ff4d4d",
-                    fontWeight: 700
-                  }}
-                >
-                  ${Number(m.amount).toFixed(2)}
-                </span>
-              </td>
-
-              <td style={td}>
-                <button
-                  onClick={() => eliminarMovimiento(m.id)}
-                  style={{
-                    background: "#300",
-                    color: "#ff4d4d",
-                    border: "1px solid #ff4d4d",
-                    padding: "4px 8px",
-                    borderRadius: 6,
-                    cursor: "pointer"
-                  }}
-                >
-                  Eliminar
-                </button>
-              </td>
-
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )}
-</section>
-
     </main>
   );
 }
@@ -976,11 +925,76 @@ function Card({ title, value }: { title: string; value: string }) {
   );
 }
 
-const panel: React.CSSProperties = { background: "#111", padding: "20px", borderRadius: "12px", border: "1px solid #333" };
-const input: React.CSSProperties = { width: "100%", padding: "12px", marginBottom: "10px", borderRadius: "10px", border: "1px solid #2a2a2a", background: "#0f0f0f", color: "#fff", outline: "none" };
-const btnGold: React.CSSProperties = { width: "100%", padding: "14px", background: "#d4af37", color: "#000", border: "none", borderRadius: "10px", fontWeight: "bold", fontSize: "16px", cursor: "pointer" };
-const btnGhost: React.CSSProperties = { padding: "10px 12px", background: "transparent", color: "#d4af37", border: "1px solid #d4af37", borderRadius: "10px", fontWeight: "bold", cursor: "pointer" };
-const btnMini: React.CSSProperties = { padding: "8px 12px", background: "#d4af37", color: "#000", border: "none", borderRadius: "10px", fontWeight: "bold", cursor: "pointer" };
-const btnMiniGhost: React.CSSProperties = { padding: "8px 12px", background: "transparent", color: "#d4af37", border: "1px solid #d4af37", borderRadius: "10px", fontWeight: "bold", cursor: "pointer", marginLeft: 8 };
-const th: React.CSSProperties = { textAlign: "left", padding: "10px", color: "#d4af37", fontWeight: 700, borderBottom: "1px solid #2a2a2a" };
-const td: React.CSSProperties = { padding: "10px", color: "#eee" };
+const panel: CSSProperties = {
+  background: "#111",
+  padding: "20px",
+  borderRadius: "12px",
+  border: "1px solid #333",
+};
+
+const input: CSSProperties = {
+  width: "100%",
+  padding: "12px",
+  marginBottom: "10px",
+  borderRadius: "10px",
+  border: "1px solid #2a2a2a",
+  background: "#0f0f0f",
+  color: "#fff",
+  outline: "none",
+};
+
+const btnGold: CSSProperties = {
+  width: "100%",
+  padding: "14px",
+  background: "#d4af37",
+  color: "#000",
+  border: "none",
+  borderRadius: "10px",
+  fontWeight: "bold",
+  fontSize: "16px",
+  cursor: "pointer",
+};
+
+const btnGhost: CSSProperties = {
+  padding: "10px 12px",
+  background: "transparent",
+  color: "#d4af37",
+  border: "1px solid #d4af37",
+  borderRadius: "10px",
+  fontWeight: "bold",
+  cursor: "pointer",
+};
+
+const btnMini: CSSProperties = {
+  padding: "8px 12px",
+  background: "#d4af37",
+  color: "#000",
+  border: "none",
+  borderRadius: "10px",
+  fontWeight: "bold",
+  cursor: "pointer",
+};
+
+const btnMiniGhost: CSSProperties = {
+  padding: "8px 12px",
+  background: "transparent",
+  color: "#d4af37",
+  border: "1px solid #d4af37",
+  borderRadius: "10px",
+  fontWeight: "bold",
+  cursor: "pointer",
+  marginLeft: 8,
+};
+
+const th: CSSProperties = {
+  textAlign: "left",
+  padding: "10px",
+  color: "#d4af37",
+  fontWeight: 700,
+  borderBottom: "1px solid #2a2a2a",
+};
+
+const td: CSSProperties = {
+  padding: "10px",
+  color: "#eee",
+};
