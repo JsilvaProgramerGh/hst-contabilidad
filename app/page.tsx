@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { supabase } from "./lib/supabase";
 
 type Txn = { id: string; type: string; amount: number };
@@ -60,6 +62,13 @@ const [detalle, setDetalle] = useState("")
   const [ingresos, setIngresos] = useState(0);
   const [gastos, setGastos] = useState(0);
 const [movimientos, setMovimientos] = useState<any[]>([]);
+const hoyISO = new Date().toISOString().slice(0, 10);
+const primerDiaMesISO = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+  .toISOString()
+  .slice(0, 10);
+
+const [desde, setDesde] = useState(primerDiaMesISO);
+const [hasta, setHasta] = useState(hoyISO);
 const ADMIN_PASSWORD = "1234";
 const ingresosList = movimientos.filter(
   (m) => m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
@@ -490,7 +499,194 @@ async function eliminarFactura(f: Factura) {
     await cargarDatos();
   }
 }
+async function cargarLogoDataUrl(path = "/logo.png"): Promise<string | null> {
+  try {
+    const res = await fetch(path);
+    if (!res.ok) return null;
+    const blob = await res.blob();
 
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+    return dataUrl;
+  } catch {
+    return null;
+  }
+}
+
+function dentroDeRango(fechaISO: string, desdeISO: string, hastaISO: string) {
+  const t = new Date(fechaISO).getTime();
+  const d = new Date(desdeISO + "T00:00:00").getTime();
+  const h = new Date(hastaISO + "T23:59:59").getTime();
+  return t >= d && t <= h;
+}
+
+async function generarEstadoCuentaPDF() {
+  // 1) Filtrar datos por rango
+  const movFiltrados = movimientos.filter((m) =>
+    dentroDeRango(m.created_at, desde, hasta)
+  );
+
+  const facFiltradas = facturas.filter((f) =>
+    dentroDeRango(f.fecha, desde, hasta)
+  );
+
+  // 2) Totales (ajustado a tu lógica actual)
+  // Ingresos = VENTA_DIRECTA + PAGO_FACTURA
+  const ingresosMov = movFiltrados
+    .filter((m) => m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA")
+    .reduce((acc, m) => acc + Number(m.amount || 0), 0);
+
+  // Gastos = GASTO + COMPRA (según tu filtro)
+  const gastosMov = movFiltrados
+    .filter((m) => m.type === "GASTO" || m.type === "COMPRA")
+    .reduce((acc, m) => acc + Number(m.amount || 0), 0);
+
+  // IVA pagado: lo tomamos desde movimientos tipo gasto/compra (columna iva)
+  const ivaPagado = movFiltrados
+    .filter((m) => m.type === "GASTO" || m.type === "COMPRA")
+    .reduce((acc, m) => acc + Number(m.iva || 0), 0);
+
+  // IVA generado: lo tomamos desde FACTURAS (columna iva) para evitar duplicar con pagos
+  const ivaGenerado = facFiltradas.reduce(
+    (acc, f: any) => acc + Number(f.iva || 0),
+    0
+  );
+
+  const balance = ingresosMov - gastosMov;
+  const ivaPorPagar = ivaGenerado - ivaPagado;
+
+  // 3) Crear PDF
+  const doc = new jsPDF("p", "mm", "a4");
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  // Logo
+  const logo = await cargarLogoDataUrl("/logo.png");
+  if (logo) {
+    doc.addImage(logo, "PNG", 12, 10, 22, 22);
+  }
+
+  // Encabezado
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("HST CONTABILIDAD", logo ? 38 : 12, 18);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text("Estado de Movimientos y Facturación", logo ? 38 : 12, 24);
+
+  doc.setFontSize(10);
+  doc.text(`Periodo: ${desde}  a  ${hasta}`, 12, 38);
+  doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 44);
+
+  // 4) Resumen tipo contador (cajas simples)
+  let y = 52;
+  doc.setFont("helvetica", "bold");
+  doc.text("Resumen", 12, y);
+  y += 6;
+
+  doc.setFont("helvetica", "normal");
+  const resumen = [
+    ["Total Ingresos (movimientos)", `$${ingresosMov.toFixed(2)}`],
+    ["Total Gastos (movimientos)", `$${gastosMov.toFixed(2)}`],
+    ["Balance", `$${balance.toFixed(2)}`],
+    ["IVA Generado (facturas)", `$${ivaGenerado.toFixed(2)}`],
+    ["IVA Pagado (gastos)", `$${ivaPagado.toFixed(2)}`],
+    ["IVA por pagar (aprox.)", `$${ivaPorPagar.toFixed(2)}`],
+  ];
+
+  autoTable(doc, {
+    startY: y,
+    head: [["Concepto", "Valor"]],
+    body: resumen,
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [20, 20, 20] },
+    margin: { left: 12, right: 12 },
+    tableWidth: pageWidth - 24,
+  });
+
+  // 5) Tabla de MOVIMIENTOS
+  let nextY = (doc as any).lastAutoTable.finalY + 10;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Historial General (Movimientos)", 12, nextY);
+  nextY += 4;
+
+  const movimientosBody = movFiltrados.map((m) => {
+    const fecha = new Date(m.created_at).toLocaleString();
+    const tipo =
+      m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
+        ? "Ingreso"
+        : "Gasto";
+
+    const total = Number(m.amount || 0);
+    const subtotal = Number(m.subtotal || 0);
+    const iva = Number(m.iva || 0);
+
+    return [
+      fecha,
+      tipo,
+      "", // N° factura (en movimientos suele no aplicar)
+      String(m.description || ""),
+      `$${total.toFixed(2)}`,
+      `$${subtotal.toFixed(2)}`,
+      `$${iva.toFixed(2)}`,
+      `${Number(m.porcentaje_iva || 0)}%`,
+    ];
+  });
+
+  autoTable(doc, {
+    startY: nextY + 3,
+    head: [["Fecha", "Tipo", "N° Factura", "Detalle", "Total", "Subtotal", "IVA", "%"]],
+    body: movimientosBody,
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [20, 20, 20] },
+    margin: { left: 12, right: 12 },
+    tableWidth: pageWidth - 24,
+  });
+
+  // 6) Tabla de FACTURAS
+  nextY = (doc as any).lastAutoTable.finalY + 10;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Facturas", 12, nextY);
+
+  const facturasBody = facFiltradas.map((f: any) => {
+    const fecha = new Date(f.fecha).toLocaleDateString();
+    const total = Number(f.monto || 0);
+    const subtotal = Number(f.subtotal || 0);
+    const iva = Number(f.iva || 0);
+
+    return [
+      fecha,
+      "Factura",
+      String(f.numero || ""),
+      String(f.cliente || ""),
+      `$${total.toFixed(2)}`,
+      `$${subtotal.toFixed(2)}`,
+      `$${iva.toFixed(2)}`,
+      `${Number(f.porcentaje_iva || 0)}%`,
+      String(f.estado || ""),
+    ];
+  });
+
+  autoTable(doc, {
+    startY: nextY + 3,
+    head: [["Fecha", "Tipo", "N° Factura", "Cliente", "Total", "Subtotal", "IVA", "%", "Estado"]],
+    body: facturasBody,
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [20, 20, 20] },
+    margin: { left: 12, right: 12 },
+    tableWidth: pageWidth - 24,
+  });
+
+  // 7) Guardar
+  doc.save(`HST-EstadoCuenta_${desde}_a_${hasta}.pdf`);
+}
   return (
     <main style={{ backgroundColor: "#0b0b0b", color: "#d4af37", minHeight: "100vh", padding: "40px", fontFamily: "Arial" }}>
       <h1 style={{ fontSize: "48px" }}>HST CONTABILIDAD</h1>
@@ -622,6 +818,33 @@ async function eliminarFactura(f: Factura) {
       </div>
       <section style={{ ...panel, marginTop: 30 }}>
   <h2 style={{ marginTop: 0 }}>📜 Historial General</h2>
+  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+  <div style={{ flex: "1 1 180px" }}>
+    <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Desde</div>
+    <input
+      type="date"
+      value={desde}
+      onChange={(e) => setDesde(e.target.value)}
+      style={input}
+    />
+  </div>
+
+  <div style={{ flex: "1 1 180px" }}>
+    <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Hasta</div>
+    <input
+      type="date"
+      value={hasta}
+      onChange={(e) => setHasta(e.target.value)}
+      style={input}
+    />
+  </div>
+
+  <div style={{ flex: "1 1 220px", display: "flex", alignItems: "end" }}>
+    <button style={btnGold} onClick={generarEstadoCuentaPDF}>
+      🧾 Descargar PDF (Estado de Cuenta)
+    </button>
+  </div>
+</div>
 
   {movimientos.length === 0 ? (
     <p style={{ color: "#aaa" }}>No hay movimientos registrados.</p>
@@ -779,7 +1002,33 @@ async function eliminarFactura(f: Factura) {
       )}
       <section style={{ ...panel, marginTop: 20 }}>
   <h2 style={{ marginTop: 0 }}>Historial General</h2>
+<div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+  <div style={{ flex: "1 1 180px" }}>
+    <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Desde</div>
+    <input
+      type="date"
+      value={desde}
+      onChange={(e) => setDesde(e.target.value)}
+      style={input}
+    />
+  </div>
 
+  <div style={{ flex: "1 1 180px" }}>
+    <div style={{ color: "#aaa", fontSize: 12, marginBottom: 4 }}>Hasta</div>
+    <input
+      type="date"
+      value={hasta}
+      onChange={(e) => setHasta(e.target.value)}
+      style={input}
+    />
+  </div>
+
+  <div style={{ flex: "1 1 260px", display: "flex", alignItems: "end" }}>
+    <button style={btnGold} onClick={generarEstadoCuentaPDF}>
+      🧾 Descargar PDF (Estado de Cuenta)
+    </button>
+  </div>
+</div>
   {movimientos.length === 0 ? (
     <p style={{ color: "#aaa" }}>No hay movimientos.</p>
   ) : (
