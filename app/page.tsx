@@ -526,167 +526,27 @@ function dentroDeRango(fechaISO: string, desdeISO: string, hastaISO: string) {
 }
 
 async function generarEstadoCuentaPDF() {
-  alert("Entró a generar PDF ✅");
-  // 1) Filtrar datos por rango
-  const movFiltrados = movimientos.filter((m) =>
-    dentroDeRango(m.created_at, desde, hasta)
-  );
+  console.log("✅ Entró a generar PDF");
+  try {
+    const doc = new jsPDF("p", "mm", "a4");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("HST CONTABILIDAD - PRUEBA PDF", 12, 20);
 
-  const facFiltradas = facturas.filter((f) =>
-    dentroDeRango(f.fecha, desde, hasta)
-  );
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
 
-  // 2) Totales (ajustado a tu lógica actual)
-  // Ingresos = VENTA_DIRECTA + PAGO_FACTURA
-  const ingresosMov = movFiltrados
-    .filter((m) => m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA")
-    .reduce((acc, m) => acc + Number(m.amount || 0), 0);
+    // Si 'desde' o 'hasta' no existen, esto también puede romper.
+    doc.text(`Periodo: ${String(desde)} a ${String(hasta)}`, 12, 28);
+    doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 34);
 
-  // Gastos = GASTO + COMPRA (según tu filtro)
-  const gastosMov = movFiltrados
-    .filter((m) => m.type === "GASTO" || m.type === "COMPRA")
-    .reduce((acc, m) => acc + Number(m.amount || 0), 0);
-
-  // IVA pagado: lo tomamos desde movimientos tipo gasto/compra (columna iva)
-  const ivaPagado = movFiltrados
-    .filter((m) => m.type === "GASTO" || m.type === "COMPRA")
-    .reduce((acc, m) => acc + Number(m.iva || 0), 0);
-
-  // IVA generado: lo tomamos desde FACTURAS (columna iva) para evitar duplicar con pagos
-  const ivaGenerado = facFiltradas.reduce(
-    (acc, f: any) => acc + Number(f.iva || 0),
-    0
-  );
-
-  const balance = ingresosMov - gastosMov;
-  const ivaPorPagar = ivaGenerado - ivaPagado;
-
-  // 3) Crear PDF
-  const doc = new jsPDF("p", "mm", "a4");
-  const pageWidth = doc.internal.pageSize.getWidth();
-
-  // Logo
-  const logo = await cargarLogoDataUrl("/logo.png");
-  if (logo) {
-    doc.addImage(logo, "PNG", 12, 10, 22, 22);
+    console.log("✅ Antes de doc.save");
+    doc.save(`PRUEBA_${String(desde)}_a_${String(hasta)}.pdf`);
+    console.log("✅ doc.save ejecutado");
+  } catch (err) {
+    console.error("❌ Error generando PDF:", err);
+    alert("❌ Error generando PDF. Abre la consola (F12) y mira el error.");
   }
-
-  // Encabezado
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.text("HST CONTABILIDAD", logo ? 38 : 12, 18);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.text("Estado de Movimientos y Facturación", logo ? 38 : 12, 24);
-
-  doc.setFontSize(10);
-  doc.text(`Periodo: ${desde}  a  ${hasta}`, 12, 38);
-  doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 44);
-
-  // 4) Resumen tipo contador (cajas simples)
-  let y = 52;
-  doc.setFont("helvetica", "bold");
-  doc.text("Resumen", 12, y);
-  y += 6;
-
-  doc.setFont("helvetica", "normal");
-  const resumen = [
-    ["Total Ingresos (movimientos)", `$${ingresosMov.toFixed(2)}`],
-    ["Total Gastos (movimientos)", `$${gastosMov.toFixed(2)}`],
-    ["Balance", `$${balance.toFixed(2)}`],
-    ["IVA Generado (facturas)", `$${ivaGenerado.toFixed(2)}`],
-    ["IVA Pagado (gastos)", `$${ivaPagado.toFixed(2)}`],
-    ["IVA por pagar (aprox.)", `$${ivaPorPagar.toFixed(2)}`],
-  ];
-
-  autoTable(doc, {
-    startY: y,
-    head: [["Concepto", "Valor"]],
-    body: resumen,
-    styles: { fontSize: 9 },
-    headStyles: { fillColor: [20, 20, 20] },
-    margin: { left: 12, right: 12 },
-    tableWidth: pageWidth - 24,
-  });
-
-  // 5) Tabla de MOVIMIENTOS
-  let nextY = (doc as any).lastAutoTable.finalY + 10;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Historial General (Movimientos)", 12, nextY);
-  nextY += 4;
-
-  const movimientosBody = movFiltrados.map((m) => {
-    const fecha = new Date(m.created_at).toLocaleString();
-    const tipo =
-      m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
-        ? "Ingreso"
-        : "Gasto";
-
-    const total = Number(m.amount || 0);
-    const subtotal = Number(m.subtotal || 0);
-    const iva = Number(m.iva || 0);
-
-    return [
-      fecha,
-      tipo,
-      "", // N° factura (en movimientos suele no aplicar)
-      String(m.description || ""),
-      `$${total.toFixed(2)}`,
-      `$${subtotal.toFixed(2)}`,
-      `$${iva.toFixed(2)}`,
-      `${Number(m.porcentaje_iva || 0)}%`,
-    ];
-  });
-
-  autoTable(doc, {
-    startY: nextY + 3,
-    head: [["Fecha", "Tipo", "N° Factura", "Detalle", "Total", "Subtotal", "IVA", "%"]],
-    body: movimientosBody,
-    styles: { fontSize: 8 },
-    headStyles: { fillColor: [20, 20, 20] },
-    margin: { left: 12, right: 12 },
-    tableWidth: pageWidth - 24,
-  });
-
-  // 6) Tabla de FACTURAS
-  nextY = (doc as any).lastAutoTable.finalY + 10;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Facturas", 12, nextY);
-
-  const facturasBody = facFiltradas.map((f: any) => {
-    const fecha = new Date(f.fecha).toLocaleDateString();
-    const total = Number(f.monto || 0);
-    const subtotal = Number(f.subtotal || 0);
-    const iva = Number(f.iva || 0);
-
-    return [
-      fecha,
-      "Factura",
-      String(f.numero || ""),
-      String(f.cliente || ""),
-      `$${total.toFixed(2)}`,
-      `$${subtotal.toFixed(2)}`,
-      `$${iva.toFixed(2)}`,
-      `${Number(f.porcentaje_iva || 0)}%`,
-      String(f.estado || ""),
-    ];
-  });
-
-  autoTable(doc, {
-    startY: nextY + 3,
-    head: [["Fecha", "Tipo", "N° Factura", "Cliente", "Total", "Subtotal", "IVA", "%", "Estado"]],
-    body: facturasBody,
-    styles: { fontSize: 8 },
-    headStyles: { fillColor: [20, 20, 20] },
-    margin: { left: 12, right: 12 },
-    tableWidth: pageWidth - 24,
-  });
-
-  // 7) Guardar
-  doc.save(`HST-EstadoCuenta_${desde}_a_${hasta}.pdf`);
 }
   return (
     <main style={{ backgroundColor: "#0b0b0b", color: "#d4af37", minHeight: "100vh", padding: "40px", fontFamily: "Arial" }}>
