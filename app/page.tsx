@@ -16,6 +16,11 @@ type Factura = {
   estado: "pendiente" | "parcial" | "pagado";
   pdf_url: string;
   fecha: string;
+
+  // opcionales (si existen en tu BD)
+  iva_mode?: "AUTO" | "MANUAL";
+  base_iva_0?: number;
+  base_iva_15?: number;
 };
 
 type PagoFactura = {
@@ -25,6 +30,9 @@ type PagoFactura = {
   fecha: string;
   nota: string | null;
 };
+
+type FundSource = "EMPRESA" | "PERSONAL";
+type IvaMode = "AUTO" | "MANUAL";
 
 function makeId() {
   const g: any = globalThis as any;
@@ -81,6 +89,34 @@ async function cargarLogoDataUrl(path = "/logo.png"): Promise<string | null> {
   }
 }
 
+function toMoney(n: number) {
+  return Number(n || 0).toFixed(2);
+}
+
+function parseMoney(s: string) {
+  const v = Number(String(s).replace(",", "."));
+  return Number.isFinite(v) ? v : NaN;
+}
+
+// Inserta en Supabase con "fallback" por si una columna no existe todavía
+async function safeInsert(table: string, payload: any, fallbackPayload?: any) {
+  const res = await supabase.from(table).insert(payload);
+  if (!res.error) return res;
+
+  const msg = String(res.error.message || "").toLowerCase();
+
+  // si falla por columna inexistente, reintenta con fallback
+  if (
+    fallbackPayload &&
+    (msg.includes("column") || msg.includes("does not exist") || msg.includes("unknown") || msg.includes("schema"))
+  ) {
+    const res2 = await supabase.from(table).insert(fallbackPayload);
+    return res2;
+  }
+
+  return res;
+}
+
 export default function Home() {
   const [status, setStatus] = useState("Conectando...");
 
@@ -94,6 +130,7 @@ export default function Home() {
   const [ingresos, setIngresos] = useState(0);
   const [gastos, setGastos] = useState(0);
   const [movimientos, setMovimientos] = useState<any[]>([]);
+  const [fundSource, setFundSource] = useState<FundSource>("EMPRESA");
 
   const hoyISO = new Date().toISOString().slice(0, 10);
   const primerDiaMesISO = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -108,8 +145,21 @@ export default function Home() {
   // ---- facturas ----
   const [cliente, setCliente] = useState("");
   const [numeroFactura, setNumeroFactura] = useState("");
-  const [montoFactura, setMontoFactura] = useState("");
-  const [porcentajeIvaFactura, setPorcentajeIvaFactura] = useState<0 | 15>(0);
+
+  // IVA factura: AUTO (bases) / MANUAL (ingresas IVA)
+  const [ivaMode, setIvaMode] = useState<IvaMode>("AUTO");
+
+  // AUTO
+  const [base0, setBase0] = useState("");
+  const [base15, setBase15] = useState("");
+
+  // MANUAL
+  const [montoFacturaManual, setMontoFacturaManual] = useState("");
+  const [ivaManual, setIvaManual] = useState("");
+
+  // compat (se mantiene para no romper lo existente; lo usamos como “indicador”)
+  const [porcentajeIvaFactura, setPorcentajeIvaFactura] = useState<0 | 15>(15);
+
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [facturas, setFacturas] = useState<Factura[]>([]);
@@ -139,12 +189,30 @@ export default function Home() {
     }, 0);
   }, [facturas, pagadoPorFactura]);
 
+  const totalsFacturaUI = useMemo(() => {
+    if (ivaMode === "AUTO") {
+      const b0 = parseMoney(base0 || "0");
+      const b15 = parseMoney(base15 || "0");
+      const ok = Number.isFinite(b0) && Number.isFinite(b15) && b0 >= 0 && b15 >= 0;
+      if (!ok) return { subtotal: 0, iva: 0, total: 0, ok: false };
+
+      const iva = Number((b15 * 0.15).toFixed(2));
+      const subtotal = Number((b0 + b15).toFixed(2));
+      const total = Number((subtotal + iva).toFixed(2));
+      return { subtotal, iva, total, ok: true };
+    }
+
+    // MANUAL
+    const total = parseMoney(montoFacturaManual || "0");
+    const iva = parseMoney(ivaManual || "0");
+    const ok = Number.isFinite(total) && Number.isFinite(iva) && total > 0 && iva >= 0 && iva <= total;
+    const subtotal = ok ? Number((total - iva).toFixed(2)) : 0;
+    return { subtotal, iva: ok ? Number(iva.toFixed(2)) : 0, total: ok ? Number(total.toFixed(2)) : 0, ok };
+  }, [ivaMode, base0, base15, montoFacturaManual, ivaManual]);
+
   async function cargarDatos() {
     // movimientos
-    const tx = await supabase
-      .from("transactions")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const tx = await supabase.from("transactions").select("*").order("created_at", { ascending: false });
 
     if (!tx.error && tx.data) {
       setMovimientos(tx.data);
@@ -201,7 +269,7 @@ export default function Home() {
 
     const { subtotal, iva } = calcIvaDesdeTotal(total, porcentajeIva);
 
-    const { error } = await supabase.from("transactions").insert({
+    const payloadConFuente = {
       amount: total,
       subtotal,
       iva,
@@ -212,13 +280,30 @@ export default function Home() {
       type: tipo === "INGRESO" ? "VENTA_DIRECTA" : "GASTO",
       proveedor,
       detalle,
-    });
+      fund_source: fundSource, // NUEVO (si existe en tu BD)
+    };
 
-    if (error) alert("Error guardando: " + error.message);
+    const payloadFallback = {
+      amount: total,
+      subtotal,
+      iva,
+      porcentaje_iva: porcentajeIva,
+      description: `${proveedor} - ${detalle}`,
+      area: "GENERAL",
+      account: "BANCO",
+      type: tipo === "INGRESO" ? "VENTA_DIRECTA" : "GASTO",
+      proveedor,
+      detalle,
+    };
+
+    const res = await safeInsert("transactions", payloadConFuente, payloadFallback);
+
+    if (res.error) alert("Error guardando: " + res.error.message);
     else {
       setMonto("");
       setProveedor("");
       setDetalle("");
+      setFundSource("EMPRESA");
       await cargarDatos();
     }
   }
@@ -242,11 +327,7 @@ export default function Home() {
       return;
     }
 
-    const res = await supabase
-      .from("facturas")
-      .select("cliente")
-      .ilike("cliente", `${query}%`)
-      .limit(8);
+    const res = await supabase.from("facturas").select("cliente").ilike("cliente", `${query}%`).limit(8);
 
     if (res.error || !res.data) {
       setSugerencias([]);
@@ -259,48 +340,82 @@ export default function Home() {
 
   async function crearFactura() {
     if (!cliente.trim()) return alert("Pon el nombre del cliente/empresa");
-    if (!montoFactura) return alert("Pon el monto total");
     if (!pdfFile) return alert("Sube el PDF");
+
+    // validar totales según modo
+    if (!totalsFacturaUI.ok) {
+      return alert(
+        ivaMode === "AUTO"
+          ? "Revisa Base 0% y Base 15% (deben ser números válidos)."
+          : "Revisa Total e IVA (IVA no puede ser mayor al total)."
+      );
+    }
 
     setSubiendo(true);
     try {
       const path = `hst/${makeId()}.pdf`;
 
-      const upload = await supabase.storage
-        .from("invoices")
-        .upload(path, pdfFile, { contentType: "application/pdf", upsert: false });
+      const upload = await supabase.storage.from("invoices").upload(path, pdfFile, {
+        contentType: "application/pdf",
+        upsert: false,
+      });
 
       if (upload.error) throw new Error(upload.error.message);
 
-      const totalFactura = parseFloat(montoFactura);
-      if (Number.isNaN(totalFactura) || totalFactura <= 0) return alert("Monto inválido");
+      const totalFactura = totalsFacturaUI.total;
+      const subtotalFactura = totalsFacturaUI.subtotal;
+      const ivaFactura = totalsFacturaUI.iva;
 
-      const { subtotal: subtotalFactura, iva: ivaFactura } = calcIvaDesdeTotal(
-        totalFactura,
-        porcentajeIvaFactura
-      );
+      // porcentaje_iva (solo “referencial” para tu tabla actual)
+      // si hay base15>0 o iva>0 => 15, sino 0
+      const pct: 0 | 15 = ivaFactura > 0 ? 15 : 0;
 
-      const ins = await supabase.from("facturas").insert({
+      // payload nuevo (si luego agregas columnas a facturas)
+      const payloadConExtras = {
         cliente: cliente.trim(),
         numero: numeroFactura.trim(),
         monto: totalFactura,
         subtotal: subtotalFactura,
         iva: ivaFactura,
-        porcentaje_iva: porcentajeIvaFactura,
+        porcentaje_iva: pct,
         estado: "pendiente",
         pdf_url: path,
         fecha: new Date().toISOString(),
-      });
 
+        iva_mode: ivaMode,
+        base_iva_0: ivaMode === "AUTO" ? Number(parseMoney(base0 || "0").toFixed(2)) : null,
+        base_iva_15: ivaMode === "AUTO" ? Number(parseMoney(base15 || "0").toFixed(2)) : null,
+      };
+
+      // fallback para tu tabla actual (sin columnas nuevas)
+      const payloadFallback = {
+        cliente: cliente.trim(),
+        numero: numeroFactura.trim(),
+        monto: totalFactura,
+        subtotal: subtotalFactura,
+        iva: ivaFactura,
+        porcentaje_iva: pct,
+        estado: "pendiente",
+        pdf_url: path,
+        fecha: new Date().toISOString(),
+      };
+
+      const ins = await safeInsert("facturas", payloadConExtras, payloadFallback);
       if (ins.error) throw new Error(ins.error.message);
 
+      // reset UI
       setCliente("");
       setNumeroFactura("");
-      setMontoFactura("");
-      setPorcentajeIvaFactura(0);
       setPdfFile(null);
       setSugerencias([]);
       setMostrarSug(false);
+
+      setIvaMode("AUTO");
+      setBase0("");
+      setBase15("");
+      setMontoFacturaManual("");
+      setIvaManual("");
+      setPorcentajeIvaFactura(15);
 
       await cargarDatos();
       alert("✅ Factura creada");
@@ -347,14 +462,24 @@ export default function Home() {
 
     if (ins.error) return alert("Error registrando pago: " + ins.error.message);
 
-    const tx = await supabase.from("transactions").insert({
+    // pago de factura entra como ingreso en movimientos
+    const txPayloadConFuente = {
       amount: pago,
       description: `Pago factura #${f.id} - ${f.cliente}`,
       area: "GENERAL",
       account: "BANCO",
       type: "PAGO_FACTURA",
-    });
+      fund_source: "EMPRESA" as FundSource,
+    };
+    const txPayloadFallback = {
+      amount: pago,
+      description: `Pago factura #${f.id} - ${f.cliente}`,
+      area: "GENERAL",
+      account: "BANCO",
+      type: "PAGO_FACTURA",
+    };
 
+    const tx = await safeInsert("transactions", txPayloadConFuente, txPayloadFallback);
     if (tx.error) return alert("Error creando movimiento: " + tx.error.message);
 
     await cargarDatos();
@@ -408,13 +533,9 @@ export default function Home() {
 
     try {
       // 1) Filtrar por rango (movimientos y facturas)
-      const movFiltrados = movimientos.filter((m) =>
-        dentroDeRango(m.created_at, desde, hasta)
-      );
+      const movFiltrados = movimientos.filter((m) => dentroDeRango(m.created_at, desde, hasta));
 
-      const facFiltradas = facturas.filter((f) =>
-        dentroDeRango(f.fecha || f.created_at, desde, hasta)
-      );
+      const facFiltradas = facturas.filter((f) => dentroDeRango(f.fecha || f.created_at, desde, hasta));
 
       // 2) Totales
       const ingresosMov = movFiltrados
@@ -477,8 +598,7 @@ export default function Home() {
         tableWidth: pageWidth - 24,
       });
 
-      let nextY =
-        (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : 90;
+      let nextY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : 90;
 
       // Tabla Movimientos
       doc.setFont("helvetica", "bold");
@@ -488,35 +608,26 @@ export default function Home() {
 
       const movimientosBody = movFiltrados.map((m) => {
         const fecha = new Date(m.created_at).toLocaleString();
-        const tipoTxt =
-          m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "Ingreso" : "Gasto";
+        const tipoTxt = m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "Ingreso" : "Gasto";
         const total = Number(m.amount || 0);
         const subtotal = Number(m.subtotal || 0);
         const iva = Number(m.iva || 0);
         const pct = Number(m.porcentaje_iva || 0);
+        const fuente = String(m.fund_source || "-");
 
-        return [
-          fecha,
-          tipoTxt,
-          String(m.description || ""),
-          `$${total.toFixed(2)}`,
-          `$${subtotal.toFixed(2)}`,
-          `$${iva.toFixed(2)}`,
-          `${pct}%`,
-        ];
+        return [fecha, tipoTxt, fuente, String(m.description || ""), `$${toMoney(total)}`, `$${toMoney(subtotal)}`, `$${toMoney(iva)}`, `${pct}%`];
       });
 
-     autoTable(doc, {
+      autoTable(doc, {
         startY: nextY + 3,
-        head: [["Fecha", "Tipo", "Detalle", "Total", "Subtotal", "IVA", "%"]],
+        head: [["Fecha", "Tipo", "Fuente", "Detalle", "Total", "Subtotal", "IVA", "%"]],
         body: movimientosBody,
         styles: { fontSize: 8 },
         margin: { left: 12, right: 12 },
         tableWidth: pageWidth - 24,
       });
 
-      nextY =
-        (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : nextY + 40;
+      nextY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : nextY + 40;
 
       // Tabla Facturas
       doc.setFont("helvetica", "bold");
@@ -530,19 +641,10 @@ export default function Home() {
         const iva = Number(f.iva || 0);
         const pct = Number(f.porcentaje_iva || 0);
 
-        return [
-          fecha,
-          String(f.numero || ""),
-          String(f.cliente || ""),
-          `$${total.toFixed(2)}`,
-          `$${subtotal.toFixed(2)}`,
-          `$${iva.toFixed(2)}`,
-          `${pct}%`,
-          String(f.estado || ""),
-        ];
+        return [fecha, String(f.numero || ""), String(f.cliente || ""), `$${toMoney(total)}`, `$${toMoney(subtotal)}`, `$${toMoney(iva)}`, `${pct}%`, String(f.estado || "")];
       });
 
-     autoTable(doc, {
+      autoTable(doc, {
         startY: nextY + 3,
         head: [["Fecha", "N°", "Cliente", "Total", "Subtotal", "IVA", "%", "Estado"]],
         body: facturasBody,
@@ -602,6 +704,12 @@ export default function Home() {
           <select value={tipo} onChange={(e) => setTipo(e.target.value as any)} style={input}>
             <option value="INGRESO">Ingreso</option>
             <option value="GASTO">Gasto</option>
+          </select>
+
+          {/* NUEVO: Fuente de dinero */}
+          <select value={fundSource} onChange={(e) => setFundSource(e.target.value as FundSource)} style={input}>
+            <option value="EMPRESA">Dinero: Empresa</option>
+            <option value="PERSONAL">Dinero: Personal</option>
           </select>
 
           <input placeholder="Monto $" value={monto} onChange={(e) => setMonto(e.target.value)} style={input} />
@@ -698,21 +806,94 @@ export default function Home() {
             style={input}
           />
 
-          <input
-            placeholder="Total $"
-            value={montoFactura}
-            onChange={(e) => setMontoFactura(e.target.value)}
-            style={input}
-          />
-
-          <select
-            value={porcentajeIvaFactura}
-            onChange={(e) => setPorcentajeIvaFactura(Number(e.target.value) as 0 | 15)}
-            style={input}
-          >
-            <option value={0}>IVA 0%</option>
-            <option value={15}>IVA 15%</option>
+          {/* NUEVO: IVA AUTO / MANUAL */}
+          <select value={ivaMode} onChange={(e) => setIvaMode(e.target.value as IvaMode)} style={input}>
+            <option value="AUTO">IVA Automático (Base 0% + Base 15%)</option>
+            <option value="MANUAL">IVA Manual (tú escribes el IVA)</option>
           </select>
+
+          {ivaMode === "AUTO" ? (
+            <>
+              <input
+                placeholder="Base 0% $ (productos sin IVA)"
+                value={base0}
+                onChange={(e) => setBase0(e.target.value)}
+                style={input}
+              />
+              <input
+                placeholder="Base 15% $ (productos con IVA)"
+                value={base15}
+                onChange={(e) => setBase15(e.target.value)}
+                style={input}
+              />
+
+              <div style={hintBox}>
+                <div style={hintRow}>
+                  <span>Subtotal:</span>
+                  <b style={{ color: "#fff" }}>${toMoney(totalsFacturaUI.subtotal)}</b>
+                </div>
+                <div style={hintRow}>
+                  <span>IVA (15% sobre base 15%):</span>
+                  <b style={{ color: "#fff" }}>${toMoney(totalsFacturaUI.iva)}</b>
+                </div>
+                <div style={hintRow}>
+                  <span>Total:</span>
+                  <b style={{ color: "#00ff88" }}>${toMoney(totalsFacturaUI.total)}</b>
+                </div>
+              </div>
+
+              {/* mantenemos el % solo como referencia (no afecta el cálculo AUTO) */}
+              <select
+                value={porcentajeIvaFactura}
+                onChange={(e) => setPorcentajeIvaFactura(Number(e.target.value) as 0 | 15)}
+                style={input}
+                disabled
+              >
+                <option value={15}>IVA 15% (automático)</option>
+                <option value={0}>IVA 0%</option>
+              </select>
+            </>
+          ) : (
+            <>
+              <input
+                placeholder="Total $ (valor total de la factura)"
+                value={montoFacturaManual}
+                onChange={(e) => setMontoFacturaManual(e.target.value)}
+                style={input}
+              />
+              <input
+                placeholder="IVA $ (valor EXACTO del IVA de esa factura)"
+                value={ivaManual}
+                onChange={(e) => setIvaManual(e.target.value)}
+                style={input}
+              />
+
+              <div style={hintBox}>
+                <div style={hintRow}>
+                  <span>Subtotal (Total - IVA):</span>
+                  <b style={{ color: "#fff" }}>${toMoney(totalsFacturaUI.subtotal)}</b>
+                </div>
+                <div style={hintRow}>
+                  <span>IVA:</span>
+                  <b style={{ color: "#fff" }}>${toMoney(totalsFacturaUI.iva)}</b>
+                </div>
+                <div style={hintRow}>
+                  <span>Total:</span>
+                  <b style={{ color: "#00ff88" }}>${toMoney(totalsFacturaUI.total)}</b>
+                </div>
+              </div>
+
+              <select
+                value={totalsFacturaUI.iva > 0 ? 15 : 0}
+                onChange={() => {}}
+                style={input}
+                disabled
+              >
+                <option value={0}>IVA 0%</option>
+                <option value={15}>IVA 15%</option>
+              </select>
+            </>
+          )}
 
           <input
             type="file"
@@ -726,12 +907,12 @@ export default function Home() {
           </button>
 
           <p style={{ color: "#888", marginTop: 12, fontSize: 13 }}>
-            * Ahora puedes registrar pagos parciales y el sistema calcula lo restante.
+            * Ahora el IVA de facturas puede ser AUTOMÁTICO por bases 0/15 o MANUAL (tú lo escribes).
           </p>
         </section>
       </div>
 
-      {/* HISTORIAL (ÚNICO - quitamos duplicados) */}
+      {/* HISTORIAL */}
       <section style={{ ...panel, marginTop: 30 }}>
         <h2 style={{ marginTop: 0 }}>📜 Historial General</h2>
 
@@ -762,6 +943,7 @@ export default function Home() {
                 <tr>
                   <th style={th}>Fecha</th>
                   <th style={th}>Tipo</th>
+                  <th style={th}>Fuente</th>
                   <th style={th}>Monto</th>
                   <th style={th}>Detalle</th>
                   <th style={th}>Acción</th>
@@ -772,17 +954,14 @@ export default function Home() {
                   <tr key={m.id} style={{ borderTop: "1px solid #2a2a2a" }}>
                     <td style={td}>{new Date(m.created_at).toLocaleString()}</td>
 
-                    <td style={td}>
-                      {m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "Ingreso" : "Gasto"}
-                    </td>
+                    <td style={td}>{m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "Ingreso" : "Gasto"}</td>
+
+                    <td style={td}>{String(m.fund_source || "-")}</td>
 
                     <td style={td}>
                       <span
                         style={{
-                          color:
-                            m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA"
-                              ? "#00ff88"
-                              : "#ff4d4d",
+                          color: m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "#00ff88" : "#ff4d4d",
                           fontWeight: 700,
                         }}
                       >
@@ -854,21 +1033,17 @@ export default function Home() {
                         <button style={btnMini} onClick={() => verPdf(f.pdf_url)}>
                           Ver PDF
                         </button>{" "}
-
                         <button style={btnMini} onClick={() => editarMontoFactura(f)}>
                           Editar monto
                         </button>{" "}
-
                         {rest > 0 && (
                           <button style={btnMiniGhost} onClick={() => registrarPago(f)}>
                             Registrar pago
                           </button>
                         )}{" "}
-
                         <button style={btnMiniGhost} onClick={() => setVerPagosDe(f)}>
                           Ver pagos
                         </button>{" "}
-
                         <button
                           style={{ ...btnMiniGhost, color: "#ff4d4d", borderColor: "#ff4d4d" }}
                           onClick={() => eliminarFactura(f)}
@@ -989,12 +1164,31 @@ const btnMiniGhost: CSSProperties = {
 const th: CSSProperties = {
   textAlign: "left",
   padding: "10px",
+  fontSize: 13,
   color: "#d4af37",
-  fontWeight: 700,
   borderBottom: "1px solid #2a2a2a",
+  whiteSpace: "nowrap",
 };
 
 const td: CSSProperties = {
   padding: "10px",
+  fontSize: 13,
   color: "#eee",
+  verticalAlign: "top",
+};
+
+const hintBox: CSSProperties = {
+  border: "1px solid #2a2a2a",
+  borderRadius: 10,
+  padding: 12,
+  marginBottom: 10,
+  background: "#0f0f0f",
+  color: "#aaa",
+};
+
+const hintRow: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 10,
+  marginBottom: 6,
 };
