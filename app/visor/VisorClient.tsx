@@ -41,9 +41,19 @@ type PagoFactura = {
 function isoHoy() {
   return new Date().toISOString().slice(0, 10);
 }
-function isoPrimerDiaMes() {
-  const d = new Date();
+function isoPrimerDiaMes(d = new Date()) {
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+}
+function isoUltimoDiaMes(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+}
+function isoPrimerDiaMesAnterior() {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth() - 1, 1).toISOString().slice(0, 10);
+}
+function isoUltimoDiaMesAnterior() {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 0).toISOString().slice(0, 10);
 }
 function enRango(fechaISO: string, desdeISO: string, hastaISO: string) {
   const t = new Date(fechaISO).getTime();
@@ -81,6 +91,14 @@ export default function VisorClient() {
   const [facturas, setFacturas] = useState<Factura[]>([]);
   const [pagos, setPagos] = useState<PagoFactura[]>([]);
 
+  // Si por alguna razón el usuario pone desde > hasta, lo corregimos al instante
+  useEffect(() => {
+    if (!desde || !hasta) return;
+    const d = new Date(desde).getTime();
+    const h = new Date(hasta).getTime();
+    if (d > h) setHasta(desde);
+  }, [desde, hasta]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -90,7 +108,6 @@ export default function VisorClient() {
           .from("transactions")
           .select("*")
           .order("created_at", { ascending: false });
-
         if (tx.error) throw tx.error;
         setMovimientos((tx.data || []) as any);
 
@@ -98,7 +115,6 @@ export default function VisorClient() {
           .from("facturas")
           .select("id,created_at,cliente,numero,monto,subtotal,iva,porcentaje_iva,estado,pdf_url,fecha")
           .order("created_at", { ascending: false });
-
         if (f.error) throw f.error;
         setFacturas((f.data || []) as any);
 
@@ -106,7 +122,6 @@ export default function VisorClient() {
           .from("pagos_factura")
           .select("id,factura_id,monto,fecha,nota")
           .order("fecha", { ascending: false });
-
         if (p.error) throw p.error;
         setPagos((p.data || []) as any);
 
@@ -170,12 +185,25 @@ export default function VisorClient() {
     }, 0);
   }, [facturas, pagosMap]);
 
+  function setMesActual() {
+    const d = new Date();
+    setDesde(isoPrimerDiaMes(d));
+    setHasta(isoUltimoDiaMes(d));
+  }
+  function setMesPasado() {
+    setDesde(isoPrimerDiaMesAnterior());
+    setHasta(isoUltimoDiaMesAnterior());
+  }
+  function setHoy() {
+    const h = isoHoy();
+    setDesde(h);
+    setHasta(h);
+  }
+
   async function verPdf(path: string) {
     try {
       const signed = await supabase.storage.from("invoices").createSignedUrl(path, 60 * 10);
       if (signed.error) throw signed.error;
-
-      // iPhone: mejor mismo tab
       window.location.href = signed.data.signedUrl;
     } catch (e: any) {
       alert("No pude abrir el PDF: " + (e?.message || e));
@@ -188,7 +216,6 @@ export default function VisorClient() {
       const { default: autoTable } = await import("jspdf-autotable");
       const pageWidth = doc.internal.pageSize.getWidth();
 
-      // Header
       const logo = await cargarLogoDataUrl("/logo.png");
       if (logo) {
         try {
@@ -206,7 +233,6 @@ export default function VisorClient() {
       doc.text(`Periodo: ${desde} a ${hasta}`, 12, 38);
       doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 44);
 
-      // Resumen
       autoTable(doc, {
         startY: 52,
         head: [["Concepto", "Valor"]],
@@ -224,7 +250,6 @@ export default function VisorClient() {
         tableWidth: pageWidth - 24,
       });
 
-      // Movimientos
       let y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : 95;
 
       doc.setFont("helvetica", "bold");
@@ -249,10 +274,8 @@ export default function VisorClient() {
         styles: { fontSize: 8 },
         margin: { left: 12, right: 12 },
         tableWidth: pageWidth - 24,
-        didDrawPage: () => {},
       });
 
-      // Facturas
       y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : y + 50;
 
       doc.setFont("helvetica", "bold");
@@ -298,8 +321,18 @@ export default function VisorClient() {
 
   return (
     <main style={page} className="hstPage">
-      {/* CSS responsive SOLO para visor (no toca tu PC) */}
+      {/* ✅ Forzamos que en visor SIEMPRE se pueda tocar los date inputs (evita CSS global que los bloquea) */}
       <style jsx global>{`
+        .hstPage input[type="date"],
+        .hstPage input,
+        .hstPage select,
+        .hstPage button {
+          pointer-events: auto !important;
+          -webkit-user-select: auto !important;
+          user-select: auto !important;
+          touch-action: manipulation !important;
+        }
+
         @media (max-width: 520px) {
           .hstPage {
             padding: 18px !important;
@@ -341,7 +374,6 @@ export default function VisorClient() {
         {status}
       </p>
 
-      {/* CARDS */}
       <div style={grid} className="hstGrid">
         <Card title="Saldo" value={money(saldo)} />
         <Card title="Ingresos" value={money(ingresos)} />
@@ -349,23 +381,47 @@ export default function VisorClient() {
         <Card title="Por cobrar" value={money(porCobrar)} />
       </div>
 
-      {/* RANGO + PDF */}
       <section style={panel} className="hstPanel">
         <h2 style={h2}>Rango + PDF</h2>
+
+        {/* Botones rápidos */}
+        <div style={quickRow}>
+          <button style={btnGhost} onClick={setHoy} type="button">
+            Hoy
+          </button>
+          <button style={btnGhost} onClick={setMesActual} type="button">
+            Mes actual
+          </button>
+          <button style={btnGhost} onClick={setMesPasado} type="button">
+            Mes pasado
+          </button>
+        </div>
 
         <div style={rangeRow} className="hstRangeRow">
           <div style={{ flex: "1 1 180px" }}>
             <div style={label}>Desde</div>
-            <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} style={input} />
+            <input
+              type="date"
+              value={desde}
+              max={hasta}
+              onChange={(e) => setDesde(e.target.value)}
+              style={input}
+            />
           </div>
 
           <div style={{ flex: "1 1 180px" }}>
             <div style={label}>Hasta</div>
-            <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} style={input} />
+            <input
+              type="date"
+              value={hasta}
+              min={desde}
+              onChange={(e) => setHasta(e.target.value)}
+              style={input}
+            />
           </div>
         </div>
 
-        <button className="hstBtn" style={btn} onClick={generarEstadoCuentaPDF}>
+        <button className="hstBtn" style={btn} onClick={generarEstadoCuentaPDF} type="button">
           📥 Descargar PDF (Estado de Cuenta)
         </button>
 
@@ -376,7 +432,6 @@ export default function VisorClient() {
         </div>
       </section>
 
-      {/* HISTORIAL */}
       <section style={panel} className="hstPanel">
         <h2 style={h2}>Historial</h2>
 
@@ -403,7 +458,6 @@ export default function VisorClient() {
         )}
       </section>
 
-      {/* FACTURAS */}
       <section style={panel} className="hstPanel">
         <h2 style={h2}>Facturas</h2>
 
@@ -427,7 +481,7 @@ export default function VisorClient() {
                   <div style={itemSub}>Restante: {money(restante)}</div>
 
                   <div style={actions}>
-                    <button className="hstMiniBtn" style={btnMini} onClick={() => verPdf(f.pdf_url)}>
+                    <button className="hstMiniBtn" style={btnMini} onClick={() => verPdf(f.pdf_url)} type="button">
                       Ver PDF
                     </button>
                   </div>
@@ -468,7 +522,7 @@ function Chip({ label, strong }: { label: string; strong?: boolean }) {
   );
 }
 
-/* ===== Styles (PC queda igual; móvil se ajusta por el <style global>) ===== */
+/* ===== Styles ===== */
 const page: CSSProperties = {
   background: "#0b0b0b",
   color: "#d4af37",
@@ -517,6 +571,13 @@ const label: CSSProperties = {
   marginBottom: 6,
 };
 
+const quickRow: CSSProperties = {
+  display: "flex",
+  gap: 10,
+  flexWrap: "wrap",
+  marginBottom: 12,
+};
+
 const rangeRow: CSSProperties = {
   display: "flex",
   gap: 12,
@@ -545,6 +606,16 @@ const btn: CSSProperties = {
   marginTop: 12,
   cursor: "pointer",
   textAlign: "center",
+};
+
+const btnGhost: CSSProperties = {
+  padding: "10px 12px",
+  background: "transparent",
+  color: "#d4af37",
+  border: "1px solid #d4af37",
+  borderRadius: 12,
+  fontWeight: 900,
+  cursor: "pointer",
 };
 
 const chipRow: CSSProperties = {
