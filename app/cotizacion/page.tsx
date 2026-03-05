@@ -154,7 +154,7 @@ function Td(props: React.TdHTMLAttributes<HTMLTableCellElement>) {
 }
 
 export default function CotizacionPage() {
-  const supabase = supabaseBrowser;
+  const supabase = useMemo(() => supabaseBrowser(), []);
 
   /** ======= Estado principal ======= */
   const [quote, setQuote] = useState<Quote>(() => ({
