@@ -10,7 +10,7 @@ export async function GET(
   const { id } = await context.params;
 
   try {
-    const { data: quote, error } = await supabaseServer
+    const { data: quote, error } = await sb
       .from("quotes")
       .select("*")
       .eq("id", id)
@@ -20,10 +20,14 @@ export async function GET(
       return NextResponse.json({ error });
     }
 
-    const { data: items } = await supabaseServer
+    const { data: items, error: itemsError } = await sb
       .from("quote_items")
       .select("*")
       .eq("quote_id", id);
+
+    if (itemsError) {
+      return NextResponse.json({ error: itemsError });
+    }
 
     return NextResponse.json({
       data: {
