@@ -574,7 +574,7 @@ export default function CotizacionPRO() {
                   <Th>Fecha</Th>
                   <Th>Cliente</Th>
                   <Th>PDF</Th>
-                  <Th></Th>
+                  <Th>Acciones</Th>
                 </tr>
               </thead>
               <tbody>
