@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 
+const sb = supabaseServer();
+
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> }

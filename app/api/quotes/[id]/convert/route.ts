@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 
+const sb = supabaseServer();
+
 function nextInvoiceNo() {
   const d = new Date();
   const y = d.getFullYear();
