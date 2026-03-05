@@ -1,35 +1,41 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ id: string }> }
-) {
-  const { id } = await context.params;
-
+export async function GET(request: Request) {
   try {
-    const { data: quote, error } = await supabaseServer
-      .from("quotes")
-      .select("*")
-      .eq("id", id)
-      .single();
+    const url = new URL(request.url);
 
-    if (error) {
-      return NextResponse.json({ error });
+    // opcional: ?id=UUID para traer una cotización específica
+    const id = url.searchParams.get("id");
+
+    if (id) {
+      const { data: quote, error } = await supabaseServer
+        .from("quotes")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (error) return NextResponse.json({ error }, { status: 400 });
+
+      const { data: items } = await supabaseServer
+        .from("quote_items")
+        .select("*")
+        .eq("quote_id", id);
+
+      return NextResponse.json({ data: { quote, items: items || [] } });
     }
 
-    const { data: items } = await supabaseServer
-      .from("quote_items")
+    // listado de cotizaciones (últimas 50)
+    const { data: quotes, error } = await supabaseServer
+      .from("quotes")
       .select("*")
-      .eq("quote_id", id);
+      .order("created_at", { ascending: false })
+      .limit(50);
 
-    return NextResponse.json({
-      data: {
-        quote,
-        items,
-      },
-    });
+    if (error) return NextResponse.json({ error }, { status: 400 });
+
+    return NextResponse.json({ data: { quotes: quotes || [] } });
   } catch (err) {
-    return NextResponse.json({ error: err });
+    return NextResponse.json({ error: err }, { status: 500 });
   }
 }
