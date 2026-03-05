@@ -4,7 +4,6 @@ import React, { useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabaseBrowser } from "@/lib/supabase-browser";
-
 type Item = { qty: number; description: string; unit: number; incl_vat: boolean };
 
 const IVA_DEFAULT = 0.15;
@@ -12,10 +11,10 @@ const IVA_DEFAULT = 0.15;
 const COMPANY = {
   name: "HST GLOBAL STORE",
   ruc: "0962974689001",
-  address: "Dirección: (edítame aquí)",
+  address: "Dirección: Quevedo, calle guatemala y chile",
   city: "Ecuador",
   phone: "WhatsApp: 0982124443",
-  email: "Email: (edítame aquí)",
+  email: "Email: hstglobalstoreventas@gmail.com",
   website: "",
   logoPath: "/logo.png",
   sealPath: "/seal.png",

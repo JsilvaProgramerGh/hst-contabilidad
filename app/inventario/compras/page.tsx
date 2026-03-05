@@ -8,7 +8,6 @@ type Supplier = {
   name: string;
   phone: string | null;
   notes: string | null;
-  active: boolean;
 };
 
 type VariantRow = {
@@ -81,6 +80,10 @@ function stringifyAttrs(attrs: any) {
 export default function ComprasPage() {
   const [status, setStatus] = useState<string>("");
 
+  // loading flags
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
+  const [savingPurchase, setSavingPurchase] = useState(false);
+
   // proveedores
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [supplierId, setSupplierId] = useState<string>("");
@@ -122,14 +125,13 @@ export default function ComprasPage() {
   async function loadSuppliers() {
     const { data, error } = await supabase
       .from("inv_suppliers")
-      .select("id,name,phone,notes,active")
+      .select("id,name,phone,notes")
       .order("name");
     if (error) throw error;
     setSuppliers((data as any) || []);
   }
 
   async function loadPurchases() {
-    // Traer compras + nombre proveedor (join manual)
     const { data, error } = await supabase
       .from("inv_purchases")
       .select("id,supplier_id,invoice_number,invoice_url,purchased_at,note,created_at")
@@ -140,7 +142,6 @@ export default function ComprasPage() {
 
     const list: Purchase[] = ((data as any) || []) as Purchase[];
 
-    // map supplier name
     const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
     list.forEach((p) => {
       p.supplier_name = p.supplier_id ? supMap.get(p.supplier_id) || null : null;
@@ -160,7 +161,6 @@ export default function ComprasPage() {
 
     const items: PurchaseItem[] = ((data as any) || []) as PurchaseItem[];
 
-    // Enriquecer con nombres de variante y producto
     const variantIds = [...new Set(items.map((i) => i.variant_id))];
     if (variantIds.length) {
       const { data: vData, error: vErr } = await supabase
@@ -199,6 +199,7 @@ export default function ComprasPage() {
       setStatus("Listo ✅");
     } catch (e: any) {
       setStatus("❌ " + (e?.message || "Error cargando datos"));
+      console.error(e);
     }
   }
 
@@ -208,12 +209,12 @@ export default function ComprasPage() {
   }, []);
 
   useEffect(() => {
-    // cada vez que cambian proveedores, recargar compras
     (async () => {
       try {
         await loadPurchases();
       } catch (e: any) {
         setStatus("❌ " + (e?.message || "Error cargando compras"));
+        console.error(e);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -230,12 +231,9 @@ export default function ComprasPage() {
           return;
         }
 
-        // Buscar variantes + producto
-        // Traemos variantes recientes y filtramos en client por term (seguro y rápido para pocos items).
-        // Si tu inventario crece mucho, luego optimizamos con un RPC/FTS.
         const { data: vData, error: vErr } = await supabase
           .from("inv_variants")
-          .select("id,name,product_id,attributes,units_per_pack,pack_unit,base_unit,active")
+          .select("id,name,product_id,attributes,units_per_pack,pack_unit,base_unit,active,created_at")
           .eq("active", true)
           .order("created_at", { ascending: false })
           .limit(200);
@@ -247,7 +245,10 @@ export default function ComprasPage() {
         const productIds = [...new Set(variants.map((v) => v.product_id))];
         let pMap = new Map<string, any>();
         if (productIds.length) {
-          const { data: pData } = await supabase.from("inv_products").select("id,name,sku,unit").in("id", productIds);
+          const { data: pData } = await supabase
+            .from("inv_products")
+            .select("id,name,sku,unit")
+            .in("id", productIds);
           (pData as any[] | null)?.forEach((p) => pMap.set(p.id, p));
         }
 
@@ -271,6 +272,7 @@ export default function ComprasPage() {
       } catch (e: any) {
         if (!alive) return;
         setStatus("❌ " + (e?.message || "Error en búsqueda"));
+        console.error(e);
       }
     }, 250);
 
@@ -285,7 +287,6 @@ export default function ComprasPage() {
     const v = variantResults.find((x) => x.id === variantId) || null;
     setVariantSelected(v);
 
-    // defaults: si units_per_pack==1, sugerir unidad
     if (v) {
       const upp = safeNum(v.units_per_pack, 1);
       if (upp <= 1) {
@@ -311,10 +312,7 @@ export default function ComprasPage() {
     const costN = Math.max(0, safeNum(costInput, 0));
 
     const units = qtyUnit === "caja" ? qn * upp : qn;
-
-    // costo por unidad base
     const unitCost = costIsPer === "caja" ? (upp > 0 ? costN / upp : costN) : costN;
-
     const total = units * unitCost;
 
     setPreviewUnits(units);
@@ -324,25 +322,33 @@ export default function ComprasPage() {
 
   async function createSupplierQuick() {
     const name = newSupName.trim();
-    if (!name) return;
+    if (!name) return alert("Escribe el nombre del proveedor.");
 
     try {
+      setCreatingSupplier(true);
       setStatus("Creando proveedor...");
+
       const { error } = await supabase.from("inv_suppliers").insert({
         name,
         phone: newSupPhone.trim() || null,
-        notes: newSupNotes.trim() || null,
-        active: true,
+        notes: newSupNotes.trim() || null, // aquí va “MIGUEL CONDOR” o lo que uses de contacto/notas
       });
+
       if (error) throw error;
 
       setNewSupName("");
       setNewSupPhone("");
       setNewSupNotes("");
+
       await loadSuppliers();
       setStatus("✅ Proveedor creado");
+      alert("Proveedor creado ✅");
     } catch (e: any) {
+      console.error(e);
       setStatus("❌ " + (e?.message || "Error creando proveedor"));
+      alert("No se pudo crear el proveedor. Abre Console (F12) para ver el error.");
+    } finally {
+      setCreatingSupplier(false);
     }
   }
 
@@ -354,13 +360,14 @@ export default function ComprasPage() {
     if (costN <= 0) return alert("Costo inválido.");
 
     try {
+      setSavingPurchase(true);
       setStatus("Guardando compra...");
 
       // 1) cabecera
       const { data: pData, error: pErr } = await supabase
         .from("inv_purchases")
         .insert({
-          supplier_id: supplierId || null, // opcional
+          supplier_id: supplierId || null,
           invoice_number: invoiceNumber.trim() || null,
           invoice_url: invoiceUrl.trim() || null,
           note: purchaseNote.trim() || null,
@@ -373,20 +380,23 @@ export default function ComprasPage() {
       const purchase_id = (pData as any).id as string;
 
       // 2) item
-      // unit_cost debe guardarse en UNIDAD BASE (unidad)
       const unit_cost = previewUnitCost;
+      const qty_units = previewUnits;
+      const total_cost = previewTotal;
 
       const { error: iErr } = await supabase.from("inv_purchase_items").insert({
         purchase_id,
         variant_id: variantSelected.id,
         qty: qn,
         qty_unit: qtyUnit,
+        qty_units,      // ✅ por si tu tabla lo exige
         unit_cost,
+        total_cost,     // ✅ por si tu tabla lo exige
       });
 
       if (iErr) throw iErr;
 
-      // reset form rápido
+      // reset form
       setInvoiceNumber("");
       setInvoiceUrl("");
       setPurchaseNote("");
@@ -398,14 +408,18 @@ export default function ComprasPage() {
       setQtyUnit("caja");
       setCostIsPer("caja");
 
-      // recargar historial
       await loadPurchases();
       setOpenPurchaseId(purchase_id);
       await loadPurchaseItems(purchase_id);
 
       setStatus("✅ Compra registrada (stock + historial de costos actualizado)");
+      alert("Compra registrada ✅");
     } catch (e: any) {
+      console.error(e);
       setStatus("❌ " + (e?.message || "Error guardando compra"));
+      alert("No se pudo guardar la compra. Abre Console (F12) para ver el error.");
+    } finally {
+      setSavingPurchase(false);
     }
   }
 
@@ -420,6 +434,7 @@ export default function ComprasPage() {
         await loadPurchaseItems(id);
       } catch (e: any) {
         setStatus("❌ " + (e?.message || "Error cargando items"));
+        console.error(e);
       }
     }
   }
@@ -448,13 +463,11 @@ export default function ComprasPage() {
             <label style={label}>Seleccionar proveedor (opcional)</label>
             <select style={input} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
               <option value="">(sin proveedor)</option>
-              {suppliers
-                .filter((s) => s.active)
-                .map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
             </select>
             <div style={{ color: "#777", fontSize: 12, marginTop: 6 }}>
               Seleccionar proveedor NO es obligatorio, pero ayuda para comparar precios luego.
@@ -464,10 +477,27 @@ export default function ComprasPage() {
           <div style={{ gridColumn: "span 2" }}>
             <label style={label}>Crear proveedor nuevo</label>
             <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1.2fr 0.8fr 1.2fr 140px" }}>
-              <input style={input} value={newSupName} onChange={(e) => setNewSupName(e.target.value)} placeholder="Nombre proveedor" />
-              <input style={input} value={newSupPhone} onChange={(e) => setNewSupPhone(e.target.value)} placeholder="Teléfono (opcional)" />
-              <input style={input} value={newSupNotes} onChange={(e) => setNewSupNotes(e.target.value)} placeholder="Notas (opcional)" />
-              <button style={btnSoft} onClick={createSupplierQuick}>Crear</button>
+              <input
+                style={input}
+                value={newSupName}
+                onChange={(e) => setNewSupName(e.target.value)}
+                placeholder="Nombre proveedor"
+              />
+              <input
+                style={input}
+                value={newSupPhone}
+                onChange={(e) => setNewSupPhone(e.target.value)}
+                placeholder="Teléfono (opcional)"
+              />
+              <input
+                style={input}
+                value={newSupNotes}
+                onChange={(e) => setNewSupNotes(e.target.value)}
+                placeholder="Notas (opcional) / Contacto"
+              />
+              <button style={btnSoft} onClick={createSupplierQuick} disabled={creatingSupplier}>
+                {creatingSupplier ? "Creando..." : "Crear"}
+              </button>
             </div>
           </div>
         </div>
@@ -592,8 +622,8 @@ export default function ComprasPage() {
             </div>
           </div>
 
-          <button style={btn} onClick={savePurchase}>
-            Registrar compra
+          <button style={btn} onClick={savePurchase} disabled={savingPurchase}>
+            {savingPurchase ? "Guardando..." : "Registrar compra"}
           </button>
 
           <div style={{ color: "#777", fontSize: 12, marginTop: 10 }}>{status}</div>
@@ -618,10 +648,18 @@ export default function ComprasPage() {
                   </div>
 
                   <div style={{ color: "#aaa", fontSize: 12, marginTop: 4 }}>
-                    {p.invoice_number ? <>Factura: <b>{p.invoice_number}</b> · </> : null}
+                    {p.invoice_number ? (
+                      <>
+                        Factura: <b>{p.invoice_number}</b> ·{" "}
+                      </>
+                    ) : null}
                     {p.invoice_url ? (
                       <>
-                        <a href={p.invoice_url} target="_blank" style={{ color: "#ffe2a8", textDecoration: "none", fontWeight: 800 }}>
+                        <a
+                          href={p.invoice_url}
+                          target="_blank"
+                          style={{ color: "#ffe2a8", textDecoration: "none", fontWeight: 800 }}
+                        >
                           Ver factura
                         </a>{" "}
                         ·{" "}
@@ -657,7 +695,8 @@ function ItemsTable({ items }: { items: PurchaseItem[] }) {
   return (
     <div style={{ border: "1px solid #222", borderRadius: 14, overflow: "hidden" }}>
       <div style={{ padding: 10, background: "#0f0f0f", color: "#aaa", fontSize: 12 }}>
-        Items: <b style={{ color: "#fff" }}>{items.length}</b> · Total: <b style={{ color: "#ffe2a8" }}>{fmtMoney(total)}</b>
+        Items: <b style={{ color: "#fff" }}>{items.length}</b> · Total:{" "}
+        <b style={{ color: "#ffe2a8" }}>{fmtMoney(total)}</b>
       </div>
 
       {items.length === 0 ? (
@@ -673,7 +712,8 @@ function ItemsTable({ items }: { items: PurchaseItem[] }) {
               </div>
               <div style={{ color: "#aaa", fontSize: 12, marginTop: 4 }}>
                 Cantidad: <b>{it.qty}</b> {it.qty_unit} · Unidades a stock: <b>{it.qty_units}</b> ·
-                Costo/unidad: <b>{fmtMoney(it.unit_cost)}</b> · Total: <b>{fmtMoney(it.total_cost)}</b>
+                Costo/unidad: <b>{fmtMoney(it.unit_cost)}</b> · Total:{" "}
+                <b>{fmtMoney(it.total_cost)}</b>
               </div>
             </div>
           ))}
@@ -683,7 +723,7 @@ function ItemsTable({ items }: { items: PurchaseItem[] }) {
   );
 }
 
-// styles (manteniendo tu look oscuro/dorado)
+// styles
 const page: React.CSSProperties = { padding: 6 };
 
 const header: React.CSSProperties = { marginBottom: 12 };
