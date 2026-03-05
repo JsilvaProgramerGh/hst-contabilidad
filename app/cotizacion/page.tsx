@@ -1,27 +1,38 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { supabaseBrowser } from "../lib/supabase-browser";
 
-type Item = { qty: number; description: string; unit: number; incl_vat: boolean };
+import { supabaseBrowser } from "@/lib/supabase-browser";
 
-const IVA_DEFAULT = 0.15;
+type QuoteItem = {
+  id?: string;
+  quote_id?: string;
+  qty: number;
+  description: string;
+  unit_price: number;
+  iva: boolean;
+};
 
-// ✅ DATOS EMPRESA (edita cuando quieras)
-const COMPANY = {
-  name: "HST GLOBAL STORE",
-  ruc: "RUC: (PON AQUÍ TU RUC)",
-  address: "Dirección: (PON AQUÍ TU DIRECCIÓN)",
-  city: "Ecuador",
-  phone: "WhatsApp: 0982124443",
-  email: "Email: (PON AQUÍ TU EMAIL)",
-  website: "",
-  logoPath: "/logo.png", // /public/logo.png
-  sealPath: "/seal.png", // opcional /public/seal.png
-  signPath: "/firma.png", // opcional /public/firma.png
-  accentBlue: [16, 95, 255] as [number, number, number],
+type Quote = {
+  id?: string;
+  quote_no: string;
+  date: string; // yyyy-mm-dd
+  valid_days: number;
+  iva_percent: number;
+  discount: number;
+  delivery: number;
+  paid: number;
+  client_name: string;
+  client_id: string;
+  client_phone: string;
+  client_email: string;
+  client_address: string;
+  notes: string;
+  status: "BORRADOR" | "ENVIADA" | "APROBADA" | "FACTURADA" | "ANULADA";
+  created_at?: string;
+  pdf_url?: string | null;
 };
 
 function money(n: number) {
@@ -29,964 +40,839 @@ function money(n: number) {
   return v.toLocaleString("es-EC", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function genQuoteNo() {
+function todayISO() {
   const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const rnd = String(Math.floor(Math.random() * 900 + 100));
-  return `PRO-${y}${m}${day}-${rnd}`;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-async function urlToDataURL(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
+function nextQuoteNo(prefix = "PRO") {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const rnd = Math.floor(100 + Math.random() * 900);
+  return `${prefix}-${yyyy}${mm}${dd}-${rnd}`;
 }
 
-export default function CotizacionPRO() {
-  const [tab, setTab] = useState<"nueva" | "historial">("nueva");
+/** ======= UI helpers ======= */
+const card = () => ({
+  background: "rgba(17,17,17,0.85)",
+  border: "1px solid #222",
+  borderRadius: 18,
+  padding: 16,
+  boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+});
 
-  // Quote ID cuando se carga desde historial o al guardar
-  const [quoteId, setQuoteId] = useState<string | null>(null);
+const input = () => ({
+  width: "100%",
+  background: "#0f0f0f",
+  color: "#eaeaea",
+  border: "1px solid #242424",
+  borderRadius: 12,
+  padding: "10px 12px",
+  outline: "none",
+});
 
-  // Cabecera
-  const [quoteNo, setQuoteNo] = useState(genQuoteNo());
-  const [dateStr, setDateStr] = useState(new Date().toISOString().slice(0, 10));
-  const [validDays, setValidDays] = useState(15);
+const label = () => ({
+  fontSize: 12,
+  color: "#9aa0a6",
+  marginBottom: 6,
+});
 
-  // Cliente
-  const [clientName, setClientName] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [clientPhone, setClientPhone] = useState("");
-  const [clientEmail, setClientEmail] = useState("");
-  const [clientAddress, setClientAddress] = useState("");
+const btn = () => ({
+  background: "linear-gradient(180deg, #1646d9, #0b2e92)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  color: "white",
+  borderRadius: 14,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 800 as const,
+  letterSpacing: 0.2,
+});
 
-  // Config
-  const [ivaRate, setIvaRate] = useState(IVA_DEFAULT);
-  const [discount, setDiscount] = useState(0);
-  const [delivery, setDelivery] = useState(0);
-  const [paid, setPaid] = useState(0);
+const btnGhost = () => ({
+  background: "rgba(255,255,255,0.03)",
+  border: "1px solid rgba(255,255,255,0.09)",
+  color: "#eaeaea",
+  borderRadius: 14,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 700 as const,
+});
 
-  const [terms, setTerms] = useState(
-    [
-      "1.- Duración de la oferta: 15 días.",
-      "2.- Anticipo del 50% antes de la producción / ejecución del servicio.",
-      "3.- Entregado el producto o ejecutado el servicio no existen devoluciones.",
-      "4.- Precios sujetos a disponibilidad y confirmación.",
-      "5.- Cambios fuera de alcance se cotizan adicionalmente.",
-    ].join("\n")
+const dangerBtn = () => ({
+  background: "rgba(255,70,70,0.10)",
+  border: "1px solid rgba(255,70,70,0.25)",
+  color: "#ffd1d1",
+  borderRadius: 14,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 800 as const,
+});
+
+/** ✅ FIX: Th/Td ahora aceptan style/colSpan/etc y children opcional */
+function Th(props: React.ThHTMLAttributes<HTMLTableCellElement>) {
+  const { children, style, ...rest } = props;
+  return (
+    <th
+      {...rest}
+      style={{
+        padding: 10,
+        borderBottom: "1px solid #222",
+        color: "#bbb",
+        fontWeight: 700,
+        fontSize: 13,
+        textAlign: "left",
+        ...(style || {}),
+      }}
+    >
+      {children ?? null}
+    </th>
   );
+}
 
-  const [notes, setNotes] = useState("Gracias por preferirnos.");
+function Td(props: React.TdHTMLAttributes<HTMLTableCellElement>) {
+  const { children, style, ...rest } = props;
+  return (
+    <td
+      {...rest}
+      style={{
+        padding: 10,
+        borderBottom: "1px solid #171717",
+        color: "#ddd",
+        fontSize: 13,
+        verticalAlign: "top",
+        ...(style || {}),
+      }}
+    >
+      {children ?? null}
+    </td>
+  );
+}
 
-  const [items, setItems] = useState<Item[]>([
-    { qty: 1, description: "Producto / Servicio", unit: 0, incl_vat: true },
+export default function CotizacionPage() {
+  const supabase = supabaseBrowser;
+
+  /** ======= Estado principal ======= */
+  const [quote, setQuote] = useState<Quote>(() => ({
+    quote_no: nextQuoteNo("PRO"),
+    date: todayISO(),
+    valid_days: 15,
+    iva_percent: 15,
+    discount: 0,
+    delivery: 0,
+    paid: 0,
+    client_name: "",
+    client_id: "",
+    client_phone: "",
+    client_email: "",
+    client_address: "",
+    notes: "",
+    status: "BORRADOR",
+    pdf_url: null,
+  }));
+
+  const [items, setItems] = useState<QuoteItem[]>(() => [
+    { qty: 1, description: "Producto / Servicio", unit_price: 0, iva: true },
   ]);
 
-  // Historial
-  const [list, setList] = useState<any[]>([]);
-  const [search, setSearch] = useState("");
-  const [loadingList, setLoadingList] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const totals = useMemo(() => {
-    const lines = items.map((it) => {
-      const qty = Number(it.qty) || 0;
-      const unit = Number(it.unit) || 0;
-      const sub = qty * unit;
-      const vat = it.incl_vat ? sub * ivaRate : 0;
-      const unitWithVat = it.incl_vat ? unit * (1 + ivaRate) : unit;
-      const total = sub + vat;
-      return { ...it, qty, unit, sub, vat, unitWithVat, total };
+  /** ======= Historial ======= */
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [history, setHistory] = useState<Array<Quote & { items_count?: number }>>([]);
+  const [historySearch, setHistorySearch] = useState("");
+
+  /** ======= Logo / Firma / Sello ======= */
+  const logoPath = "/logo.png";
+  const firmaPath = "/firma.png";
+  const selloPath = "/sello.png";
+
+  /** ======= Totales ======= */
+  const subtotal = useMemo(() => {
+    return items.reduce((acc, it) => acc + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0);
+  }, [items]);
+
+  const ivaValue = useMemo(() => {
+    const ivaP = (Number(quote.iva_percent) || 0) / 100;
+    return items.reduce((acc, it) => {
+      if (!it.iva) return acc;
+      return acc + (Number(it.qty) || 0) * (Number(it.unit_price) || 0) * ivaP;
+    }, 0);
+  }, [items, quote.iva_percent]);
+
+  const total = useMemo(() => {
+    return subtotal + ivaValue - (Number(quote.discount) || 0) + (Number(quote.delivery) || 0);
+  }, [subtotal, ivaValue, quote.discount, quote.delivery]);
+
+  const balance = useMemo(() => {
+    return total - (Number(quote.paid) || 0);
+  }, [total, quote.paid]);
+
+  /** ======= Handlers ======= */
+  function setQuoteField<K extends keyof Quote>(key: K, value: Quote[K]) {
+    setQuote((q) => ({ ...q, [key]: value }));
+  }
+
+  function setItem(index: number, patch: Partial<QuoteItem>) {
+    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+  }
+
+  function addLine() {
+    setItems((prev) => [...prev, { qty: 1, description: "", unit_price: 0, iva: true }]);
+  }
+
+  function removeLine(index: number) {
+    setItems((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function resetNew() {
+    setQuote({
+      quote_no: nextQuoteNo("PRO"),
+      date: todayISO(),
+      valid_days: 15,
+      iva_percent: 15,
+      discount: 0,
+      delivery: 0,
+      paid: 0,
+      client_name: "",
+      client_id: "",
+      client_phone: "",
+      client_email: "",
+      client_address: "",
+      notes: "",
+      status: "BORRADOR",
+      pdf_url: null,
     });
+    setItems([{ qty: 1, description: "Producto / Servicio", unit_price: 0, iva: true }]);
+  }
 
-    const subtotal = lines.reduce((a, b) => a + b.sub, 0);
-    const iva = lines.reduce((a, b) => a + b.vat, 0);
+  function duplicateQuote() {
+    setQuote((q) => ({
+      ...q,
+      id: undefined,
+      quote_no: nextQuoteNo("PRO"),
+      status: "BORRADOR",
+      pdf_url: null,
+    }));
+  }
 
-    const disc = Math.max(0, Number(discount) || 0);
-    const del = Math.max(0, Number(delivery) || 0);
-    const neto = Math.max(0, subtotal - disc);
-    const totalFinal = Math.max(0, neto + iva + del);
-
-    const paidVal = Math.max(0, Number(paid) || 0);
-    const saldo = Math.max(0, totalFinal - paidVal);
-
-    return { lines, subtotal, iva, disc, neto, del, totalFinal, paidVal, saldo };
-  }, [items, ivaRate, discount, delivery, paid]);
-
-  const exportingRef = useRef(false);
-
-  const buildPDF = async () => {
-    const doc = new jsPDF("p", "mm", "a4");
-    const pageW = doc.internal.pageSize.getWidth();
-    const margin = 12;
-
-    const logo = await urlToDataURL(COMPANY.logoPath);
-    const seal = await urlToDataURL(COMPANY.sealPath);
-    const sign = await urlToDataURL(COMPANY.signPath);
-
-    // Línea azul superior
-    doc.setFillColor(...COMPANY.accentBlue);
-    doc.rect(0, 0, pageW, 8, "F");
-
-    // Encabezado
-    let y = 18;
-
-    if (logo) doc.addImage(logo, "PNG", margin, y - 8, 32, 32);
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("COTIZACIÓN / PROFORMA", margin + (logo ? 38 : 0), y);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    const companyLines = [
-      COMPANY.name,
-      COMPANY.ruc,
-      COMPANY.address,
-      COMPANY.city,
-      COMPANY.phone,
-      COMPANY.email,
-      COMPANY.website,
-    ].filter(Boolean);
-
-    companyLines.forEach((l, i) => doc.text(String(l), margin + (logo ? 38 : 0), y + 6 + i * 4));
-
-    // Caja datos documento (derecha)
-    const boxW = 72;
-    const boxX = pageW - margin - boxW;
-    const boxY = 14;
-    doc.setDrawColor(30);
-    doc.setLineWidth(0.3);
-    doc.rect(boxX, boxY, boxW, 28);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("DATOS", boxX + 4, boxY + 6);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`N°: ${quoteNo}`, boxX + 4, boxY + 12);
-    doc.text(`Fecha: ${dateStr}`, boxX + 4, boxY + 17);
-    doc.text(`Validez: ${validDays} días`, boxX + 4, boxY + 22);
-
-    // Cliente
-    const clientY = 52;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("DATOS DEL CLIENTE", margin, clientY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.rect(margin, clientY + 3, pageW - margin * 2, 22);
-
-    const leftX = margin + 3;
-    doc.text(`Nombre: ${clientName || "-"}`, leftX, clientY + 9);
-    doc.text(`CI/RUC: ${clientId || "-"}`, pageW / 2, clientY + 9);
-    doc.text(`Teléfono: ${clientPhone || "-"}`, leftX, clientY + 14);
-    doc.text(`Email: ${clientEmail || "-"}`, pageW / 2, clientY + 14);
-    doc.text(`Dirección: ${clientAddress || "-"}`, leftX, clientY + 19);
-
-    // Tabla
-    const tableY = clientY + 30;
-
-    autoTable(doc, {
-      startY: tableY,
-      head: [["Cant.", "Descripción", "P. Unitario", "P.U. con IVA", "Total"]],
-      body: totals.lines.map((l) => [
-        String(l.qty),
-        l.description || "-",
-        `$ ${money(l.unit)}`,
-        `$ ${money(l.unitWithVat)}`,
-        `$ ${money(l.total)}`,
-      ]),
-      styles: { font: "helvetica", fontSize: 9, cellPadding: 2.2, lineWidth: 0.1 },
-      headStyles: {
-        fillColor: [245, 248, 255],
-        textColor: [10, 20, 40],
-        fontStyle: "bold",
-        lineWidth: 0.1,
-      },
-      columnStyles: {
-        0: { cellWidth: 14, halign: "center" },
-        1: { cellWidth: 88 },
-        2: { cellWidth: 26, halign: "right" },
-        3: { cellWidth: 28, halign: "right" },
-        4: { cellWidth: 28, halign: "right" },
-      },
-    });
-
-    const afterTableY = (doc as any).lastAutoTable.finalY + 6;
-
-    // Totales derecha
-    const totalsBoxW = 82;
-    const totalsBoxX = pageW - margin - totalsBoxW;
-    const totalsBoxY = afterTableY;
-
-    doc.rect(totalsBoxX, totalsBoxY, totalsBoxW, 48);
-
-    const tXLabel = totalsBoxX + 4;
-    const tXVal = totalsBoxX + totalsBoxW - 4;
-
-    const line = (label: string, value: string, yy: number, bold = false) => {
-      doc.setFont("helvetica", bold ? "bold" : "normal");
-      doc.text(label, tXLabel, yy);
-      doc.text(value, tXVal, yy, { align: "right" });
-    };
-
-    doc.setFontSize(9);
-    let ty = totalsBoxY + 6;
-    line("Total parcial:", `$ ${money(totals.subtotal)}`, ty);
-    ty += 5;
-    line("Descuento:", `- $ ${money(totals.disc)}`, ty);
-    ty += 5;
-    line("Neto:", `$ ${money(totals.neto)}`, ty, true);
-    ty += 5;
-    line(`IVA (${Math.round(ivaRate * 100)}%):`, `$ ${money(totals.iva)}`, ty);
-    ty += 5;
-    line("Envío / Delivery:", `$ ${money(totals.del)}`, ty);
-    ty += 5;
-    line("TOTAL FINAL:", `$ ${money(totals.totalFinal)}`, ty, true);
-    ty += 6;
-    line("Pagado:", `$ ${money(totals.paidVal)}`, ty);
-    ty += 5;
-    line("Saldo:", `$ ${money(totals.saldo)}`, ty, true);
-
-    // Notas + términos
-    let textY = totalsBoxY + 54;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("NOTAS", margin, textY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(doc.splitTextToSize(notes || "-", pageW - margin * 2), margin, textY + 5);
-
-    textY += 18;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("TÉRMINOS Y CONDICIONES", margin, textY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(doc.splitTextToSize((terms || "-").trim(), pageW - margin * 2), margin, textY + 5);
-
-    // Firma / sello opcional
-    const footerY = 270;
-    if (sign) doc.addImage(sign, "PNG", pageW - margin - 55, footerY - 18, 50, 18);
-    if (seal) doc.addImage(seal, "PNG", pageW - margin - 28, footerY - 8, 24, 24);
-
-    // Pie
-    doc.setFontSize(8);
-    doc.setTextColor(120);
-    doc.text(`${COMPANY.name} — Documento generado desde HST Contabilidad`, margin, 289);
-    doc.setTextColor(0);
-
-    return doc;
-  };
-
-  const downloadPDF = async () => {
-    if (exportingRef.current) return;
-    exportingRef.current = true;
+  /** ======= PDF ======= */
+  async function loadImageAsDataURL(path: string): Promise<string | null> {
     try {
-      const doc = await buildPDF();
-      doc.save(`${quoteNo}.pdf`);
-    } finally {
-      exportingRef.current = false;
-    }
-  };
-
-  const uploadPDFandGetUrl = async (): Promise<string | null> => {
-    const sb = supabaseBrowser();
-    const doc = await buildPDF();
-    const blob = doc.output("blob");
-    const path = `quotes/${quoteNo}.pdf`;
-
-    const { error } = await sb.storage.from("docs").upload(path, blob, {
-      upsert: true,
-      contentType: "application/pdf",
-    });
-
-    if (error) {
-      alert("No se pudo subir el PDF a Storage: " + error.message);
+      const res = await fetch(path);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
       return null;
     }
+  }
 
-    const { data } = sb.storage.from("docs").getPublicUrl(path);
-    return data.publicUrl || null;
-  };
+  async function generatePDFBlob(): Promise<Blob> {
+    const doc = new jsPDF("p", "mm", "a4");
 
-  const saveQuote = async (alsoUploadPdf: boolean) => {
-    let pdf_url: string | null = null;
-    if (alsoUploadPdf) pdf_url = await uploadPDFandGetUrl();
+    const logo = await loadImageAsDataURL(logoPath);
+    const firma = await loadImageAsDataURL(firmaPath);
+    const sello = await loadImageAsDataURL(selloPath);
 
-    const payload = {
-      quote: {
-        quote_no: quoteNo,
-        date: dateStr,
-        valid_days: validDays,
-        client_name: clientName,
-        client_id: clientId,
-        client_phone: clientPhone,
-        client_email: clientEmail,
-        client_address: clientAddress,
-        iva_rate: ivaRate,
-        discount,
-        delivery,
-        paid,
-        terms,
-        notes,
-        pdf_url: pdf_url ?? undefined,
-      },
-      items: items.map((it) => ({
-        qty: it.qty,
-        description: it.description,
-        unit: it.unit,
-        incl_vat: it.incl_vat,
-      })),
-    };
+    // Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("COTIZACIÓN", 14, 18);
 
-    const res = await fetch("/api/quotes", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`N°: ${quote.quote_no}`, 14, 25);
+    doc.text(`Fecha: ${quote.date}`, 14, 30);
+    doc.text(`Validez: ${quote.valid_days} días`, 14, 35);
+
+    if (logo) {
+      try {
+        doc.addImage(logo, "PNG", 150, 10, 45, 20);
+      } catch {}
+    }
+
+    // Cliente
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Datos del cliente", 14, 46);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Nombre: ${quote.client_name || "-"}`, 14, 52);
+    doc.text(`CI/RUC: ${quote.client_id || "-"}`, 14, 57);
+    doc.text(`Teléfono: ${quote.client_phone || "-"}`, 14, 62);
+    doc.text(`Email: ${quote.client_email || "-"}`, 14, 67);
+    doc.text(`Dirección: ${quote.client_address || "-"}`, 14, 72);
+
+    // Tabla items
+    const rows = items.map((it) => {
+      const qty = Number(it.qty) || 0;
+      const unit = Number(it.unit_price) || 0;
+      const ivaP = (Number(quote.iva_percent) || 0) / 100;
+      const unitWithIva = it.iva ? unit * (1 + ivaP) : unit;
+      const lineTotal = qty * unitWithIva;
+      return [
+        qty,
+        it.description || "",
+        `$ ${money(unit)}`,
+        it.iva ? "Sí" : "No",
+        `$ ${money(unitWithIva)}`,
+        `$ ${money(lineTotal)}`,
+      ];
     });
 
-    const json = await res.json();
-    if (!res.ok) return alert(json.error || "Error guardando cotización");
+    autoTable(doc, {
+      startY: 80,
+      head: [["Cant.", "Descripción", "P. Unitario", "IVA", "P.U con IVA", "Total"]],
+      body: rows,
+      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: { fillColor: [20, 20, 20] },
+    });
 
-    // tu API responde { data: { quote: q } }
-    const id = json?.data?.quote?.id ?? null;
-    setQuoteId(id);
+    const y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : 180;
 
-    alert(alsoUploadPdf ? "✅ Guardado + PDF subido (link listo para compartir)." : "✅ Cotización guardada.");
-  };
+    doc.setFont("helvetica", "bold");
+    doc.text(`Subtotal: $ ${money(subtotal)}`, 140, y);
+    doc.text(`IVA: $ ${money(ivaValue)}`, 140, y + 6);
+    doc.text(`Descuento: $ ${money(Number(quote.discount) || 0)}`, 140, y + 12);
+    doc.text(`Delivery: $ ${money(Number(quote.delivery) || 0)}`, 140, y + 18);
+    doc.text(`Total: $ ${money(total)}`, 140, y + 26);
 
-  const loadList = async () => {
-    setLoadingList(true);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Pagado: $ ${money(Number(quote.paid) || 0)}`, 140, y + 34);
+    doc.text(`Saldo: $ ${money(balance)}`, 140, y + 40);
+
+    if (quote.notes?.trim()) {
+      doc.setFont("helvetica", "bold");
+      doc.text("Notas:", 14, y + 34);
+      doc.setFont("helvetica", "normal");
+      doc.text(quote.notes, 14, y + 40);
+    }
+
+    // Firma / Sello
+    if (firma) {
+      try {
+        doc.addImage(firma, "PNG", 14, 255, 55, 25);
+      } catch {}
+    }
+    if (sello) {
+      try {
+        doc.addImage(sello, "PNG", 75, 255, 35, 35);
+      } catch {}
+    }
+
+    // Pie
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("HST CONTABILIDAD - Cotización PRO", 14, 290);
+
+    const blob = doc.output("blob");
+    return blob;
+  }
+
+  async function downloadPDF() {
+    setLoading(true);
     try {
-      const res = await fetch("/api/quotes");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      setList(json.data || []);
+      const blob = await generatePDFBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${quote.quote_no}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (e: any) {
-      alert(e.message);
+      alert("No se pudo generar el PDF: " + (e?.message || e));
     } finally {
-      setLoadingList(false);
+      setLoading(false);
     }
-  };
+  }
 
-  const openQuote = async (id: string) => {
-    const res = await fetch(`/api/quotes/${id}`);
-    const json = await res.json();
-    if (!res.ok) return alert(json.error || "Error cargando");
+  /** ======= Guardar en DB (quotes + quote_items) ======= */
+  async function saveQuote() {
+    setSaving(true);
+    try {
+      const payload: any = { ...quote };
+      delete payload.id;
+      delete payload.created_at;
 
-    const q = json.data.quote;
-    const its = json.data.items as any[];
+      // upsert quote
+      let quoteId = quote.id;
 
-    setQuoteId(q.id);
-    setQuoteNo(q.quote_no);
-    setDateStr(String(q.date));
-    setValidDays(q.valid_days);
+      if (!quoteId) {
+        const { data, error } = await supabase.from("quotes").insert(payload).select("id").single();
+        if (error) throw error;
+        quoteId = data?.id;
+      } else {
+        const { error } = await supabase.from("quotes").update(payload).eq("id", quoteId);
+        if (error) throw error;
+      }
 
-    setClientName(q.client_name || "");
-    setClientId(q.client_id || "");
-    setClientPhone(q.client_phone || "");
-    setClientEmail(q.client_email || "");
-    setClientAddress(q.client_address || "");
+      // refresh local
+      setQuote((q) => ({ ...q, id: quoteId }));
 
-    setIvaRate(Number(q.iva_rate ?? IVA_DEFAULT));
-    setDiscount(Number(q.discount ?? 0));
-    setDelivery(Number(q.delivery ?? 0));
-    setPaid(Number(q.paid ?? 0));
+      // delete items old
+      await supabase.from("quote_items").delete().eq("quote_id", quoteId);
 
-    setTerms(q.terms || "");
-    setNotes(q.notes || "");
+      // insert items
+      const itemsToInsert = items.map((it) => ({
+        quote_id: quoteId,
+        qty: Number(it.qty) || 0,
+        description: it.description || "",
+        unit_price: Number(it.unit_price) || 0,
+        iva: !!it.iva,
+      }));
 
-    setItems(
-      (its || []).map((x) => ({
-        qty: Number(x.qty ?? 1),
-        description: String(x.description ?? ""),
-        unit: Number(x.unit ?? 0),
-        incl_vat: Boolean(x.incl_vat ?? true),
-      }))
-    );
+      const { error: itemsErr } = await supabase.from("quote_items").insert(itemsToInsert);
+      if (itemsErr) throw itemsErr;
 
-    setTab("nueva");
-  };
+      alert("✅ Guardado");
+    } catch (e: any) {
+      alert("No se pudo guardar: " + (e?.message || e));
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  const duplicateAsNew = () => {
-    setQuoteId(null);
-    setQuoteNo(genQuoteNo());
-    alert("✅ Duplicado listo. Guarda como nueva cotización.");
-  };
+  /** ======= WhatsApp ======= */
+  function shareWhatsApp() {
+    const phone = (quote.client_phone || "").replace(/\D/g, "");
+    const msg =
+      `Hola ${quote.client_name || ""}, te envío la cotización ${quote.quote_no}.\n` +
+      `Total: $ ${money(total)}\n` +
+      `Validez: ${quote.valid_days} días.\n` +
+      `Gracias.`;
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    window.open(url, "_blank");
+  }
 
-  const deleteQuote = async (id: string) => {
+  /** ======= Historial ======= */
+  async function loadHistory() {
+    setHistoryLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("quotes")
+        .select("id, quote_no, date, client_name, status, total:delivery") // NOTE: solo para traer algo, si tu tabla tiene total guárdalo real
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+      setHistory((data as any[])?.map((x) => x) || []);
+    } catch (e: any) {
+      alert("No se pudo cargar historial: " + (e?.message || e));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function openQuote(id: string) {
+    setShowHistory(false);
+    setLoading(true);
+    try {
+      const { data: q, error: qErr } = await supabase.from("quotes").select("*").eq("id", id).single();
+      if (qErr) throw qErr;
+
+      const { data: its, error: iErr } = await supabase.from("quote_items").select("*").eq("quote_id", id);
+      if (iErr) throw iErr;
+
+      setQuote(q as any);
+      setItems(
+        (its as any[])?.map((it) => ({
+          id: it.id,
+          quote_id: it.quote_id,
+          qty: it.qty,
+          description: it.description,
+          unit_price: it.unit_price,
+          iva: it.iva,
+        })) || []
+      );
+    } catch (e: any) {
+      alert("No se pudo abrir: " + (e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteQuote(id: string) {
     if (!confirm("¿Eliminar esta cotización?")) return;
-    const res = await fetch(`/api/quotes/${id}`, { method: "DELETE" });
-    const json = await res.json();
-    if (!res.ok) return alert(json.error || "Error eliminando");
-    await loadList();
-  };
-
-  const convertToInvoice = async () => {
-    if (!quoteId) return alert("Primero guarda la cotización.");
-    const res = await fetch(`/api/quotes/${quoteId}/convert`, { method: "POST" });
-    const json = await res.json();
-    if (!res.ok) return alert(json.error || "Error convirtiendo");
-    alert(`✅ Convertido a FACTURA ${json.data.invoice_no}`);
-  };
-
-  // ✅ WhatsApp: si ya existe pdf_url en BD, úsalo; si no, sube
-  const whatsappShare = async () => {
-    let link: string | null = null;
-
-    if (quoteId) {
-      const r = await fetch(`/api/quotes/${quoteId}`);
-      const j = await r.json();
-      if (r.ok) link = j?.data?.quote?.pdf_url || null;
+    try {
+      await supabase.from("quote_items").delete().eq("quote_id", id);
+      const { error } = await supabase.from("quotes").delete().eq("id", id);
+      if (error) throw error;
+      alert("✅ Eliminada");
+      loadHistory();
+    } catch (e: any) {
+      alert("No se pudo eliminar: " + (e?.message || e));
     }
-    if (!link) link = await uploadPDFandGetUrl();
-
-    const msg = [
-      `*${COMPANY.name}*`,
-      `Cotización: *${quoteNo}*`,
-      `Cliente: ${clientName || "-"}`,
-      `Total: $ ${money(totals.totalFinal)}`,
-      link ? `PDF: ${link}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
-  };
-
-  // ✅ EMAIL: llama al endpoint /api/quotes/[id]/email
- const emailSend = async () => {
-  if (!quoteId) {
-    alert("Primero guarda la cotización.");
-    return;
   }
 
-  if (!clientEmail?.trim()) {
-    alert("Falta el email del cliente.");
-    return;
-  }
-
-  // verificar si ya existe pdf_url
-  let link: string | null = null;
-
-  try {
-    const r = await fetch(`/api/quotes/${quoteId}`);
-    const j = await r.json();
-    if (r.ok) link = j?.data?.quote?.pdf_url || null;
-  } catch {}
-
-  // si no existe PDF lo subimos automáticamente
-  if (!link) {
-    link = await uploadPDFandGetUrl();
-  }
-
-  const r = await fetch(`/api/quotes/${quoteId}/email`, {
-    method: "POST",
-  });
-
-  const j = await r.json();
-
-  if (!r.ok) {
-    alert(j.error || "Error enviando email");
-    return;
-  }
-
-  alert("✅ Cotización enviada al correo del cliente.");
-};
-
-  const addItem = () => setItems((p) => [...p, { qty: 1, description: "", unit: 0, incl_vat: true }]);
-  const removeItem = (idx: number) => setItems((p) => p.filter((_, i) => i !== idx));
-  const updateItem = (idx: number, patch: Partial<Item>) =>
-    setItems((p) => p.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
-
+  /** ======= UI ======= */
   const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase();
-    if (!s) return list;
-    return list.filter(
-      (x) =>
-        String(x.quote_no).toLowerCase().includes(s) ||
-        String(x.client_name || "").toLowerCase().includes(s)
-    );
-  }, [list, search]);
+    const s = historySearch.trim().toLowerCase();
+    if (!s) return history;
+    return history.filter((q) => {
+      return (
+        String(q.quote_no || "").toLowerCase().includes(s) ||
+        String(q.client_name || "").toLowerCase().includes(s) ||
+        String(q.status || "").toLowerCase().includes(s)
+      );
+    });
+  }, [history, historySearch]);
 
   return (
     <div style={{ padding: 18, maxWidth: 1200, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <h1 style={{ fontSize: 34, margin: 0 }}>🧾 Cotización PRO</h1>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: 0.2 }}>📄 Cotización PRO</div>
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setTab("nueva")} style={tabBtn(tab === "nueva")}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
+          <button
+            onClick={() => {
+              resetNew();
+            }}
+            style={btn()}
+          >
             Nueva
           </button>
           <button
             onClick={() => {
-              setTab("historial");
-              loadList();
+              setShowHistory(true);
+              loadHistory();
             }}
-            style={tabBtn(tab === "historial")}
+            style={btnGhost()}
           >
             Historial
           </button>
         </div>
       </div>
 
-      <div style={{ color: "#9aa0a6", marginTop: 6 }}>
-        Logo: <b>/public/logo.png</b> — Firma: <b>/public/firma.png</b> — Sello: <b>/public/seal.png</b> (opcionales)
+      <div style={{ color: "#666", marginBottom: 14 }}>
+        Logo: <code>{"/public/logo.png"}</code> — Firma: <code>{"/public/firma.png"}</code> — Sello:{" "}
+        <code>{"/public/sello.png"}</code>
       </div>
 
-      {tab === "historial" ? (
-        <div style={{ ...card(), marginTop: 14 }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ fontWeight: 900 }}>📚 Historial de cotizaciones</div>
-            <button onClick={loadList} style={btn()}>
-              ↻ Actualizar
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+        <div style={card()}>
+          <div style={label()}>N° Cotización</div>
+          <input style={input()} value={quote.quote_no} onChange={(e) => setQuoteField("quote_no", e.target.value)} />
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button style={btnGhost()} onClick={() => setQuoteField("quote_no", nextQuoteNo("PRO"))}>
+              Nuevo N°
+            </button>
+            <button style={btnGhost()} onClick={duplicateQuote}>
+              Duplicar
             </button>
           </div>
+        </div>
 
-          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-            <input
-              style={input()}
-              placeholder="Buscar por N° o cliente..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+        <div style={card()}>
+          <div style={label()}>Fecha</div>
+          <input style={input()} type="date" value={quote.date} onChange={(e) => setQuoteField("date", e.target.value)} />
+        </div>
+
+        <div style={card()}>
+          <div style={label()}>Validez (días)</div>
+          <input
+            style={input()}
+            type="number"
+            value={quote.valid_days}
+            onChange={(e) => setQuoteField("valid_days", Number(e.target.value))}
+          />
+        </div>
+
+        <div style={card()}>
+          <div style={label()}>IVA (%)</div>
+          <input
+            style={input()}
+            type="number"
+            value={quote.iva_percent}
+            onChange={(e) => setQuoteField("iva_percent", Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+        <div style={card()}>
+          <div style={{ fontWeight: 900, marginBottom: 10, color: "#ddd" }}>👤 Datos del cliente</div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <div style={label()}>Nombre</div>
+              <input style={input()} value={quote.client_name} onChange={(e) => setQuoteField("client_name", e.target.value)} />
+            </div>
+            <div>
+              <div style={label()}>CI / RUC</div>
+              <input style={input()} value={quote.client_id} onChange={(e) => setQuoteField("client_id", e.target.value)} />
+            </div>
+            <div>
+              <div style={label()}>Teléfono</div>
+              <input style={input()} value={quote.client_phone} onChange={(e) => setQuoteField("client_phone", e.target.value)} />
+            </div>
+            <div>
+              <div style={label()}>Email</div>
+              <input style={input()} value={quote.client_email} onChange={(e) => setQuoteField("client_email", e.target.value)} />
+            </div>
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <div style={label()}>Dirección</div>
+            <input style={input()} value={quote.client_address} onChange={(e) => setQuoteField("client_address", e.target.value)} />
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <div style={label()}>Notas</div>
+            <textarea
+              style={{ ...input(), height: 90, resize: "vertical" }}
+              value={quote.notes}
+              onChange={(e) => setQuoteField("notes", e.target.value)}
             />
           </div>
-
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
-              <thead>
-                <tr style={{ background: "#0b1220" }}>
-                  <Th>N°</Th>
-                  <Th>Fecha</Th>
-                  <Th>Cliente</Th>
-                  <Th>PDF</Th>
-                  <Th>Acciones</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {loadingList ? (
-                  <tr>
-                    <td colSpan={5} style={{ padding: 14, color: "#9aa0a6" }}>
-                      Cargando…
-                    </td>
-                  </tr>
-                ) : filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} style={{ padding: 14, color: "#9aa0a6" }}>
-                      Sin resultados.
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((q) => (
-                    <tr key={q.id} style={{ borderBottom: "1px solid #1f2a44" }}>
-                      <Td>{q.quote_no}</Td>
-                      <Td>{String(q.date || "")}</Td>
-                      <Td>{q.client_name || "-"}</Td>
-                      <Td>
-                        {q.pdf_url ? (
-                          <a href={q.pdf_url} target="_blank" rel="noreferrer" style={{ color: "#7aa7ff" }}>
-                            Abrir
-                          </a>
-                        ) : (
-                          "-"
-                        )}
-                      </Td>
-                      <Td style={{ textAlign: "right" }}>
-                        <button onClick={() => openQuote(q.id)} style={btn()}>
-                          Abrir
-                        </button>{" "}
-                        <button onClick={() => deleteQuote(q.id)} style={dangerBtn()}>
-                          Eliminar
-                        </button>
-                      </Td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
         </div>
-      ) : (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr", gap: 10, marginTop: 14 }}>
-            <div style={card()}>
-              <label style={label()}>N° Cotización</label>
-              <input style={input()} value={quoteNo} onChange={(e) => setQuoteNo(e.target.value)} />
-              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  onClick={() => {
-                    setQuoteId(null);
-                    setQuoteNo(genQuoteNo());
-                  }}
-                  style={btn()}
-                >
-                  Nuevo N°
-                </button>
-                <button onClick={duplicateAsNew} style={btn()}>
-                  Duplicar
-                </button>
-              </div>
-            </div>
 
-            <div style={card()}>
-              <label style={label()}>Fecha</label>
-              <input style={input()} type="date" value={dateStr} onChange={(e) => setDateStr(e.target.value)} />
-            </div>
+        <div style={card()}>
+          <div style={{ fontWeight: 900, marginBottom: 10, color: "#ddd" }}>⚡ Acciones</div>
 
-            <div style={card()}>
-              <label style={label()}>Validez (días)</label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <div style={label()}>Descuento ($)</div>
               <input
                 style={input()}
                 type="number"
-                min={1}
-                value={validDays}
-                onChange={(e) => setValidDays(Number(e.target.value))}
+                value={quote.discount}
+                onChange={(e) => setQuoteField("discount", Number(e.target.value))}
               />
             </div>
-
-            <div style={card()}>
-              <label style={label()}>IVA (%)</label>
+            <div>
+              <div style={label()}>Delivery ($)</div>
               <input
                 style={input()}
                 type="number"
-                min={0}
-                step="0.01"
-                value={(ivaRate * 100).toFixed(2)}
-                onChange={(e) => setIvaRate(Math.max(0, Number(e.target.value) / 100))}
+                value={quote.delivery}
+                onChange={(e) => setQuoteField("delivery", Number(e.target.value))}
               />
             </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10, marginTop: 12 }}>
-            <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 10 }}>👤 Datos del cliente</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <label style={label()}>Nombre</label>
-                  <input style={input()} value={clientName} onChange={(e) => setClientName(e.target.value)} />
-                </div>
-                <div>
-                  <label style={label()}>CI / RUC</label>
-                  <input style={input()} value={clientId} onChange={(e) => setClientId(e.target.value)} />
-                </div>
-                <div>
-                  <label style={label()}>Teléfono</label>
-                  <input style={input()} value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} />
-                </div>
-                <div>
-                  <label style={label()}>Email</label>
-                  <input style={input()} value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} />
-                </div>
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={label()}>Dirección</label>
-                  <input style={input()} value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} />
-                </div>
-              </div>
+            <div>
+              <div style={label()}>Pagado ($)</div>
+              <input style={input()} type="number" value={quote.paid} onChange={(e) => setQuoteField("paid", Number(e.target.value))} />
             </div>
 
-            <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 10 }}>⚡ Acciones</div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <label style={label()}>Descuento ($)</label>
-                  <input
-                    style={input()}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={discount}
-                    onChange={(e) => setDiscount(Number(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label style={label()}>Delivery ($)</label>
-                  <input
-                    style={input()}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={delivery}
-                    onChange={(e) => setDelivery(Number(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label style={label()}>Pagado ($)</label>
-                  <input
-                    style={input()}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={paid}
-                    onChange={(e) => setPaid(Number(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label style={label()}>Total final</label>
-                  <div
-                    style={{
-                      background: "#0b1220",
-                      border: "1px solid #1f2a44",
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      fontSize: 18,
-                      fontWeight: 900,
-                    }}
-                  >
-                    $ {money(totals.totalFinal)}
-                  </div>
-                  <div style={{ color: "#9aa0a6", marginTop: 6 }}>
-                    Saldo: <b>$ {money(totals.saldo)}</b>
-                  </div>
-                </div>
-              </div>
-
-              {/* ✅ BOTONES */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
-                <button onClick={downloadPDF} style={btnPrimary()}>
-                  ⬇️ PDF
-                </button>
-                <button onClick={whatsappShare} style={btnPrimary()}>
-                  🟢 WhatsApp
-                </button>
-
-                <button onClick={() => saveQuote(false)} style={btn()}>
-                  💾 Guardar
-                </button>
-                <button onClick={() => saveQuote(true)} style={btn()}>
-                  ☁️ Guardar + Subir PDF
-                </button>
-
-                <button onClick={convertToInvoice} style={btn()}>
-                  🧾 Convertir a Factura
-                </button>
-
-                {/* ✅ NUEVO: ENVIAR EMAIL PRO */}
-                <button onClick={emailSend} style={btnPrimary()}>
-                  ✉️ Enviar Email
-                </button>
-              </div>
-
-              <div style={{ color: "#9aa0a6", fontSize: 12, marginTop: 10 }}>
-                ✅ “Guardar + Subir PDF” crea un link público para enviar al cliente. <br />
-                ✅ “Enviar Email” requiere que exista el endpoint /api/quotes/[id]/email y que el cliente tenga email.
-              </div>
-            </div>
-          </div>
-
-          <div style={{ ...card(), marginTop: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontWeight: 900 }}>📦 Detalle</div>
-              <button onClick={addItem} style={btn()}>
-                + Agregar línea
-              </button>
-            </div>
-
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
-                <thead>
-                  <tr style={{ background: "#0b1220" }}>
-                    <Th>Cant.</Th>
-                    <Th>Descripción</Th>
-                    <Th>P. Unitario</Th>
-                    <Th>IVA</Th>
-                    <Th>P.U. con IVA</Th>
-                    <Th>Total</Th>
-                    <Th></Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {totals.lines.map((l, idx) => (
-                    <tr key={idx} style={{ borderBottom: "1px solid #1f2a44" }}>
-                      <Td>
-                        <input
-                          style={input({ width: 80 })}
-                          type="number"
-                          min={0}
-                          step="1"
-                          value={items[idx].qty}
-                          onChange={(e) => updateItem(idx, { qty: Number(e.target.value) })}
-                        />
-                      </Td>
-                      <Td>
-                        <input
-                          style={input()}
-                          value={items[idx].description}
-                          onChange={(e) => updateItem(idx, { description: e.target.value })}
-                        />
-                      </Td>
-                      <Td>
-                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <span style={{ color: "#9aa0a6" }}>$</span>
-                          <input
-                            style={input({ width: 140 })}
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={items[idx].unit}
-                            onChange={(e) => updateItem(idx, { unit: Number(e.target.value) })}
-                          />
-                        </div>
-                      </Td>
-                      <Td style={{ textAlign: "center" }}>
-                        <input
-                          type="checkbox"
-                          checked={items[idx].incl_vat}
-                          onChange={(e) => updateItem(idx, { incl_vat: e.target.checked })}
-                        />
-                      </Td>
-                      <Td style={{ textAlign: "right", paddingRight: 12 }}>$ {money(l.unitWithVat)}</Td>
-                      <Td style={{ textAlign: "right", paddingRight: 12, fontWeight: 900 }}>$ {money(l.total)}</Td>
-                      <Td style={{ textAlign: "right" }}>
-                        <button onClick={() => removeItem(idx)} style={dangerBtn()}>
-                          ✖
-                        </button>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginTop: 14 }}>
-              <Mini k="Total parcial" v={`$ ${money(totals.subtotal)}`} />
-              <Mini k="Descuento" v={`$ ${money(totals.disc)}`} />
-              <Mini k="Neto" v={`$ ${money(totals.neto)}`} />
-              <Mini k={`IVA (${Math.round(ivaRate * 100)}%)`} v={`$ ${money(totals.iva)}`} />
-              <Mini k="Total final" v={`$ ${money(totals.totalFinal)}`} bold />
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <div style={{ color: "#888", fontSize: 12 }}>Total final</div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>$ {money(total)}</div>
+              <div style={{ color: "#888", fontSize: 12 }}>Saldo: $ {money(balance)}</div>
             </div>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
-            <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>📝 Notas</div>
-              <textarea style={textarea()} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <button style={btn()} onClick={downloadPDF} disabled={loading}>
+              ⬇️ PDF
+            </button>
+            <button style={btn()} onClick={shareWhatsApp}>
+              🟢 WhatsApp
+            </button>
+
+            <button style={btnGhost()} onClick={saveQuote} disabled={saving}>
+              💾 Guardar
+            </button>
+            <button
+              style={btnGhost()}
+              onClick={() => alert('Por ahora "Guardar + Subir PDF" depende de Storage/RLS; lo dejamos para después.')}
+            >
+              ☁️ Guardar + Subir PDF
+            </button>
+
+            <button style={btnGhost()} onClick={() => alert("Convertir a Factura: lo activamos luego.")}>
+              🧾 Convertir a Factura
+            </button>
+            <button
+              style={btnGhost()}
+              onClick={() => alert('Enviar Email: lo activamos luego (requiere endpoint + Resend + Storage OK).')}
+            >
+              ✉️ Enviar Email
+            </button>
+          </div>
+
+          <div style={{ marginTop: 10, fontSize: 12, color: "#6f6f6f" }}>
+            ✅ “Guardar + Subir PDF” crea un link público para enviar al cliente.
+            <br />
+            ✅ “Enviar Email” requiere endpoint <code>/api/quotes/[id]/email</code> y que el cliente tenga email.
+          </div>
+        </div>
+      </div>
+
+      {/* Detalle */}
+      <div style={{ ...card(), marginTop: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <div style={{ fontWeight: 900, color: "#ddd" }}>📦 Detalle</div>
+          <div style={{ marginLeft: "auto" }}>
+            <button style={btnGhost()} onClick={addLine}>
+              + Agregar línea
+            </button>
+          </div>
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <Th>Cant.</Th>
+                <Th>Descripción</Th>
+                <Th>P. Unitario</Th>
+                <Th>IVA</Th>
+                <Th>P.U. con IVA</Th>
+                <Th>Total</Th>
+                <Th></Th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it, idx) => {
+                const ivaP = (Number(quote.iva_percent) || 0) / 100;
+                const unit = Number(it.unit_price) || 0;
+                const unitWithIva = it.iva ? unit * (1 + ivaP) : unit;
+                const lineTotal = (Number(it.qty) || 0) * unitWithIva;
+
+                return (
+                  <tr key={idx}>
+                    <Td>
+                      <input
+                        style={input()}
+                        type="number"
+                        value={it.qty}
+                        onChange={(e) => setItem(idx, { qty: Number(e.target.value) })}
+                      />
+                    </Td>
+                    <Td>
+                      <input
+                        style={input()}
+                        value={it.description}
+                        onChange={(e) => setItem(idx, { description: e.target.value })}
+                      />
+                    </Td>
+                    <Td>
+                      <input
+                        style={input()}
+                        type="number"
+                        value={it.unit_price}
+                        onChange={(e) => setItem(idx, { unit_price: Number(e.target.value) })}
+                      />
+                    </Td>
+                    <Td style={{ textAlign: "center" }}>
+                      <input type="checkbox" checked={it.iva} onChange={(e) => setItem(idx, { iva: e.target.checked })} />
+                    </Td>
+                    <Td>$ {money(unitWithIva)}</Td>
+                    <Td>$ {money(lineTotal)}</Td>
+                    <Td style={{ textAlign: "right" }}>
+                      <button style={dangerBtn()} onClick={() => removeLine(idx)} title="Eliminar línea">
+                        ✖
+                      </button>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Historial modal */}
+      {showHistory && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.65)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 18,
+            zIndex: 999,
+          }}
+          onClick={() => setShowHistory(false)}
+        >
+          <div style={{ ...card(), width: "min(1100px, 100%)" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ fontWeight: 900, fontSize: 18 }}>📚 Historial de cotizaciones</div>
+              <div style={{ marginLeft: "auto" }}>
+                <button style={btnGhost()} onClick={() => setShowHistory(false)}>
+                  Cerrar
+                </button>
+              </div>
             </div>
-            <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>📌 Términos y condiciones</div>
-              <textarea style={textarea()} value={terms} onChange={(e) => setTerms(e.target.value)} />
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+              <input
+                style={input()}
+                placeholder="Buscar por N°, cliente o estado..."
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+              />
+              <button style={btnGhost()} onClick={loadHistory} disabled={historyLoading}>
+                {historyLoading ? "Cargando..." : "Recargar"}
+              </button>
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <Th>N°</Th>
+                    <Th>Fecha</Th>
+                    <Th>Estado</Th>
+                    <Th>Cliente</Th>
+                    <Th>PDF</Th>
+                    <Th>Acciones</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((q: any) => (
+                    <tr key={q.id}>
+                      <Td>{q.quote_no}</Td>
+                      <Td>{q.date}</Td>
+                      <Td>{q.status}</Td>
+                      <Td>{q.client_name}</Td>
+                      <Td>{q.pdf_url ? "Sí" : "-"}</Td>
+
+                      {/* ✅ FIX: div bien cerrado + acciones alineadas */}
+                      <Td>
+                        <div style={{ textAlign: "right" }}>
+                          <button onClick={() => openQuote(q.id)} style={btn()}>
+                            Abrir
+                          </button>{" "}
+                          <button onClick={() => deleteQuote(q.id)} style={dangerBtn()}>
+                            Eliminar
+                          </button>
+                        </div>
+                      </Td>
+                    </tr>
+                  ))}
+
+                  {filtered.length === 0 && (
+                    <tr>
+                      <Td colSpan={6} style={{ color: "#777" }}>
+                        {historyLoading ? "Cargando..." : "No hay resultados."}
+                      </Td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: 10, color: "#777", fontSize: 12 }}>
+              Tip: abre una cotización para editarla y luego puedes Guardar / PDF / WhatsApp.
             </div>
           </div>
-        </>
+        </div>
       )}
-    </div>
-  );
-}
-
-/* UI */
-function card(): React.CSSProperties {
-  return { border: "1px solid #1f2a44", background: "#0a0f1d", borderRadius: 16, padding: 14 };
-}
-function label(): React.CSSProperties {
-  return { display: "block", fontSize: 12, color: "#9aa0a6", marginBottom: 6 };
-}
-function input(extra: React.CSSProperties = {}): React.CSSProperties {
-  return {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #1f2a44",
-    background: "#0b1220",
-    color: "white",
-    outline: "none",
-    ...extra,
-  };
-}
-function textarea(): React.CSSProperties {
-  return {
-    width: "100%",
-    minHeight: 140,
-    background: "#0b1220",
-    border: "1px solid #1f2a44",
-    color: "white",
-    borderRadius: 14,
-    padding: 12,
-    outline: "none",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 12.5,
-  };
-}
-function btn(): React.CSSProperties {
-  return {
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: "1px solid #2a3557",
-    background: "#111827",
-    color: "white",
-    fontWeight: 900,
-    cursor: "pointer",
-  };
-}
-function btnPrimary(): React.CSSProperties {
-  return {
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: "1px solid #2a3557",
-    background: "#0b4bff",
-    color: "white",
-    fontWeight: 900,
-    cursor: "pointer",
-  };
-}
-function dangerBtn(): React.CSSProperties {
-  return {
-    padding: "8px 10px",
-    borderRadius: 12,
-    border: "1px solid #3a1d1d",
-    background: "#1a0b0b",
-    color: "#ffb4b4",
-    fontWeight: 900,
-    cursor: "pointer",
-  };
-}
-function tabBtn(active: boolean): React.CSSProperties {
-  return {
-    padding: "8px 12px",
-    borderRadius: 14,
-    border: "1px solid #2a3557",
-    background: active ? "#0b4bff" : "#111827",
-    color: "white",
-    fontWeight: 900,
-    cursor: "pointer",
-  };
-}
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        textAlign: "left",
-        padding: 10,
-        fontSize: 12,
-        color: "#cbd5e1",
-        borderBottom: "1px solid #1f2a44",
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: 10, verticalAlign: "top" }}>{children}</td>;
-}
-function Mini({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
-  return (
-    <div style={{ border: "1px solid #1f2a44", background: "#0b1220", borderRadius: 14, padding: 10 }}>
-      <div style={{ fontSize: 12, color: "#9aa0a6" }}>{k}</div>
-      <div style={{ fontSize: bold ? 16 : 14, fontWeight: bold ? 900 : 800, marginTop: 2 }}>{v}</div>
     </div>
   );
 }
