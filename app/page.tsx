@@ -4,8 +4,210 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import jsPDF from "jspdf";
 import { supabase } from "./lib/supabase";
 
+/** ✅ MENÚ LATERAL (hamburguesa + drawer) */
+function InventoryDrawer() {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  return (
+    <>
+      {/* Botón ☰ fijo arriba-izquierda */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={drawerFab}
+        aria-label="Abrir menú"
+        title="Menú"
+      >
+        ☰
+      </button>
+
+      {/* Fondo oscuro al abrir */}
+      {open && <div style={drawerBackdrop} onClick={() => setOpen(false)} />}
+
+      {/* Drawer */}
+      <aside
+        style={{
+          ...drawerPanel,
+          transform: open ? "translateX(0)" : "translateX(-110%)",
+        }}
+      >
+        <div style={drawerHeader}>
+          <div>
+            <div style={drawerBrandTitle}>HST</div>
+            <div style={drawerBrandSub}>Menú rápido</div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            style={drawerClose}
+            aria-label="Cerrar"
+            title="Cerrar"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={drawerSection}>CONTABILIDAD</div>
+<nav style={{ display: "grid", gap: 8 }}>
+
+  <a style={drawerItem} href="/" onClick={() => setOpen(false)}>
+    📊 Panel Contabilidad
+  </a>
+
+  <a style={drawerItem} href="/cotizacion" onClick={() => setOpen(false)}>
+    📄 Cotizaciones
+  </a>
+
+</nav>
+
+        <div style={drawerDivider} />
+
+        <div style={drawerSection}>INVENTARIO</div>
+        <nav style={{ display: "grid", gap: 8 }}>
+          <a style={drawerItem} href="/inventario" onClick={() => setOpen(false)}>
+            🏠 Inicio Inventario
+          </a>
+          <a style={drawerItem} href="/inventario/productos" onClick={() => setOpen(false)}>
+            📦 Productos
+          </a>
+          <a style={drawerItem} href="/inventario/compras" onClick={() => setOpen(false)}>
+            🛒 Compras
+          </a>
+          <a style={drawerItem} href="/inventario/calculadora" onClick={() => setOpen(false)}>
+            🧮 Calculadora PVP
+          </a>
+          <a style={drawerItem} href="/inventario/stock" onClick={() => setOpen(false)}>
+            📦 Inventario (Stock)
+          </a>
+          <a style={drawerItem} href="/inventario/venta" onClick={() => setOpen(false)}>
+            💰 Venta (POS)
+          </a>
+          <a style={drawerItem} href="/inventario/reportes" onClick={() => setOpen(false)}>
+            📊 Reportes
+          </a>
+        </nav>
+
+        <div style={drawerFooter}>
+          <div style={{ color: "#777", fontSize: 11 }}>HST Global Store</div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+const drawerFab: React.CSSProperties = {
+  position: "fixed",
+  left: 14,
+  top: 14,
+  zIndex: 9999,
+  width: 44,
+  height: 44,
+  borderRadius: 12,
+  border: "1px solid #6b5a1b",
+  background: "#d4af37",
+  color: "#000",
+  fontWeight: 900,
+  fontSize: 22,
+  cursor: "pointer",
+  boxShadow: "0 10px 25px rgba(0,0,0,0.55)",
+};
+
+const drawerBackdrop: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.55)",
+  zIndex: 9998,
+};
+
+const drawerPanel: React.CSSProperties = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  height: "100vh",
+  width: 320,
+  background: "#0b0b0b",
+  borderRight: "1px solid #222",
+  zIndex: 9999,
+  padding: 14,
+  transition: "transform 180ms ease-out",
+  overflowY: "auto",
+};
+
+const drawerHeader: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  paddingBottom: 10,
+};
+
+const drawerBrandTitle: React.CSSProperties = {
+  color: "#d4af37",
+  fontWeight: 900,
+  fontSize: 18,
+  letterSpacing: 1,
+};
+
+const drawerBrandSub: React.CSSProperties = {
+  color: "#aaa",
+  fontSize: 12,
+  marginTop: 2,
+};
+
+const drawerClose: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 10,
+  border: "1px solid #333",
+  background: "#111",
+  color: "#fff",
+  cursor: "pointer",
+  fontWeight: 900,
+};
+
+const drawerSection: React.CSSProperties = {
+  color: "#777",
+  fontSize: 11,
+  fontWeight: 900,
+  marginTop: 8,
+  marginBottom: 8,
+  letterSpacing: 0.5,
+};
+
+const drawerItem: React.CSSProperties = {
+  display: "block",
+  padding: "10px 12px",
+  borderRadius: 12,
+  background: "#111",
+  border: "1px solid #222",
+  color: "#fff",
+  textDecoration: "none",
+  fontWeight: 800,
+};
+
+const drawerDivider: React.CSSProperties = {
+  height: 1,
+  background: "#222",
+  margin: "12px 0",
+};
+
+const drawerFooter: React.CSSProperties = {
+  marginTop: 14,
+  paddingTop: 10,
+  borderTop: "1px solid #222",
+};
+
 type Factura = {
-  id: number;
+  id: number | string; // ✅ ahora soporta UUID de POS
   created_at: string;
   cliente: string;
   numero: string;
@@ -21,6 +223,9 @@ type Factura = {
   iva_mode?: "AUTO" | "MANUAL";
   base_iva_0?: number;
   base_iva_15?: number;
+
+  // ✅ nuevo: marca si la fila viene del POS
+  is_pos?: boolean;
 };
 
 type PagoFactura = {
@@ -182,7 +387,11 @@ export default function Home() {
 
   const porCobrar = useMemo(() => {
     return facturas.reduce((acc, f) => {
-      const pagado = pagadoPorFactura.get(f.id) || 0;
+      // POS = pagado completo (para no inflar “por cobrar”)
+      if (f.is_pos) return acc;
+
+      const idNum = typeof f.id === "number" ? f.id : NaN;
+      const pagado = Number.isFinite(idNum) ? pagadoPorFactura.get(idNum) || 0 : 0;
       const restante = Math.max(0, Number(f.monto) - pagado);
       if (restante > 0) acc += restante;
       return acc;
@@ -211,18 +420,61 @@ export default function Home() {
   }, [ivaMode, base0, base15, montoFacturaManual, ivaManual]);
 
   async function cargarDatos() {
-    // movimientos
-    const tx = await supabase.from("transactions").select("*").order("created_at", { ascending: false });
+    // 1) Movimientos normales (transactions)
+    // 2) Facturas normales (facturas)
+    // 3) Pagos (pagos_factura)
+    // 4) POS views (vw_inv_pos_*)
+    const [tx, f, p, posHist, posFac] = await Promise.all([
+      supabase.from("transactions").select("*").order("created_at", { ascending: false }),
+      supabase
+        .from("facturas")
+        .select("id,created_at,cliente,numero,monto,subtotal,iva,porcentaje_iva,estado,pdf_url,fecha")
+        .order("created_at", { ascending: false }),
+      supabase.from("pagos_factura").select("id,factura_id,monto,fecha,nota").order("fecha", { ascending: false }),
 
+      // POS: Historial general
+      supabase
+        .from("vw_inv_pos_historial_general")
+        .select("fecha,tipo,fuente,monto,detalle,ref_id")
+        .order("fecha", { ascending: false }),
+
+      // POS: Listado facturas
+      supabase
+        .from("vw_inv_pos_listado_facturas")
+        .select("id,fecha,cliente,numero_factura,total,pagado,restante,estado,pdf_url")
+        .order("fecha", { ascending: false }),
+    ]);
+
+    // pagos
+    if (!p.error && p.data) setPagos(p.data as any);
+
+    // Movimientos POS -> normalizar al formato de la tabla transactions
+    const posMovs =
+      !posHist.error && posHist.data
+        ? (posHist.data as any[]).map((r) => ({
+            id: `POS_${r.ref_id}`, // id sintético (no está en transactions)
+            created_at: r.fecha,
+            type: "VENTA_POS",
+            amount: Number(r.monto || 0),
+            description: r.detalle || "Venta POS",
+            fund_source: "EMPRESA",
+          }))
+        : [];
+
+    // Movimientos
     if (!tx.error && tx.data) {
-      setMovimientos(tx.data);
+      const merged = [...tx.data, ...posMovs].sort(
+        (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      setMovimientos(merged);
 
       let total = 0;
       let ing = 0;
       let gas = 0;
 
-      tx.data.forEach((t: any) => {
-        if (t.type === "VENTA_DIRECTA" || t.type === "PAGO_FACTURA") {
+      merged.forEach((t: any) => {
+        if (t.type === "VENTA_DIRECTA" || t.type === "PAGO_FACTURA" || t.type === "VENTA_POS") {
           total += Number(t.amount);
           ing += Number(t.amount);
         } else {
@@ -236,21 +488,32 @@ export default function Home() {
       setGastos(gas);
     }
 
-    // facturas
-    const f = await supabase
-      .from("facturas")
-      .select("id,created_at,cliente,numero,monto,subtotal,iva,porcentaje_iva,estado,pdf_url,fecha")
-      .order("created_at", { ascending: false });
+    // Facturas POS (como "pagadas" por defecto, para no inflar por cobrar)
+    const posFacturas =
+      !posFac.error && posFac.data
+        ? (posFac.data as any[]).map((r) => ({
+            id: r.id, // uuid
+            created_at: new Date(r.fecha).toISOString(),
+            cliente: r.cliente || "CLIENTE (no registrado)",
+            numero: r.numero_factura || "-",
+            monto: Number(r.total || 0),
+            subtotal: undefined,
+            iva: undefined,
+            porcentaje_iva: undefined,
+            estado: "pagado" as const, // ✅ POS se asume pagado
+            pdf_url: r.pdf_url || "",
+            fecha: new Date(r.fecha).toISOString(),
+            is_pos: true,
+          }))
+        : [];
 
-    if (!f.error && f.data) setFacturas(f.data as any);
-
-    // pagos
-    const p = await supabase
-      .from("pagos_factura")
-      .select("id,factura_id,monto,fecha,nota")
-      .order("fecha", { ascending: false });
-
-    if (!p.error && p.data) setPagos(p.data as any);
+    // Facturas normales + POS
+    if (!f.error && f.data) {
+      const mergedFac = [...(f.data as any[]), ...posFacturas].sort(
+        (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      setFacturas(mergedFac as any);
+    }
   }
 
   useEffect(() => {
@@ -309,6 +572,11 @@ export default function Home() {
   }
 
   const eliminarMovimiento = async (id: string) => {
+    // ✅ movimientos POS no se eliminan desde aquí
+    if (String(id).startsWith("POS_")) {
+      return alert("Este movimiento viene del POS (Inventario). Se gestiona desde Inventario.");
+    }
+
     const pass = prompt("Ingrese contraseña para eliminar:");
     if (pass !== ADMIN_PASSWORD) return alert("Contraseña incorrecta");
 
@@ -342,7 +610,6 @@ export default function Home() {
     if (!cliente.trim()) return alert("Pon el nombre del cliente/empresa");
     if (!pdfFile) return alert("Sube el PDF");
 
-    // validar totales según modo
     if (!totalsFacturaUI.ok) {
       return alert(
         ivaMode === "AUTO"
@@ -366,11 +633,8 @@ export default function Home() {
       const subtotalFactura = totalsFacturaUI.subtotal;
       const ivaFactura = totalsFacturaUI.iva;
 
-      // porcentaje_iva (solo “referencial” para tu tabla actual)
-      // si hay base15>0 o iva>0 => 15, sino 0
       const pct: 0 | 15 = ivaFactura > 0 ? 15 : 0;
 
-      // payload nuevo (si luego agregas columnas a facturas)
       const payloadConExtras = {
         cliente: cliente.trim(),
         numero: numeroFactura.trim(),
@@ -387,7 +651,6 @@ export default function Home() {
         base_iva_15: ivaMode === "AUTO" ? Number(parseMoney(base15 || "0").toFixed(2)) : null,
       };
 
-      // fallback para tu tabla actual (sin columnas nuevas)
       const payloadFallback = {
         cliente: cliente.trim(),
         numero: numeroFactura.trim(),
@@ -403,7 +666,6 @@ export default function Home() {
       const ins = await safeInsert("facturas", payloadConExtras, payloadFallback);
       if (ins.error) throw new Error(ins.error.message);
 
-      // reset UI
       setCliente("");
       setNumeroFactura("");
       setPdfFile(null);
@@ -427,24 +689,36 @@ export default function Home() {
   }
 
   async function verPdf(path: string) {
+    if (!path) return alert("Este registro no tiene PDF adjunto.");
+
+    // Si es URL completa
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      window.open(path, "_blank");
+      return;
+    }
+
+    // Si es ruta del bucket
     const signed = await supabase.storage.from("invoices").createSignedUrl(path, 60 * 10);
     if (signed.error) return alert("No pude abrir el PDF: " + signed.error.message);
     window.location.href = signed.data.signedUrl;
   }
 
   function restanteFactura(f: Factura) {
-    const pagado = pagadoPorFactura.get(f.id) || 0;
+    if (f.is_pos) return 0;
+
+    const idNum = typeof f.id === "number" ? f.id : NaN;
+    const pagado = Number.isFinite(idNum) ? pagadoPorFactura.get(idNum) || 0 : 0;
     return Math.max(0, Number(f.monto) - pagado);
   }
 
   async function registrarPago(f: Factura) {
+    if (f.is_pos) return alert("Esta venta viene del POS y se asume pagada.");
+
     const restante = restanteFactura(f);
     if (restante <= 0) return alert("Esa factura ya está pagada.");
 
     const valor = prompt(
-      `Registrar pago parcial\nCliente: ${f.cliente}\nRestante: $${restante.toFixed(
-        2
-      )}\n\n¿Cuánto pagó hoy?`,
+      `Registrar pago parcial\nCliente: ${f.cliente}\nRestante: $${restante.toFixed(2)}\n\n¿Cuánto pagó hoy?`,
       restante.toFixed(2)
     );
 
@@ -454,15 +728,17 @@ export default function Home() {
     if (Number.isNaN(pago) || pago <= 0) return alert("Monto inválido");
     if (pago > restante) return alert("Ese pago es mayor que el restante");
 
+    const idNum = typeof f.id === "number" ? f.id : NaN;
+    if (!Number.isFinite(idNum)) return alert("Factura inválida para pagos.");
+
     const ins = await supabase.from("pagos_factura").insert({
-      factura_id: f.id,
+      factura_id: idNum,
       monto: pago,
       nota: null,
     });
 
     if (ins.error) return alert("Error registrando pago: " + ins.error.message);
 
-    // pago de factura entra como ingreso en movimientos
     const txPayloadConFuente = {
       amount: pago,
       description: `Pago factura #${f.id} - ${f.cliente}`,
@@ -495,6 +771,8 @@ export default function Home() {
   }
 
   async function editarMontoFactura(f: Factura) {
+    if (f.is_pos) return alert("Las ventas POS se editan desde Inventario (POS).");
+
     const nuevo = prompt(`Monto actual: $${f.monto}\nIngrese nuevo monto:`, f.monto.toString());
     if (!nuevo) return;
 
@@ -511,6 +789,8 @@ export default function Home() {
   }
 
   async function eliminarFactura(f: Factura) {
+    if (f.is_pos) return alert("Las ventas POS se eliminan desde Inventario (POS).");
+
     const pass = prompt("Ingrese contraseña para eliminar factura:");
     if (pass !== ADMIN_PASSWORD) return alert("Contraseña incorrecta");
 
@@ -518,7 +798,6 @@ export default function Home() {
     if (!confirmacion) return;
 
     await supabase.from("pagos_factura").delete().eq("factura_id", f.id);
-
     const { error } = await supabase.from("facturas").delete().eq("id", f.id);
 
     if (error) alert("Error eliminando: " + error.message);
@@ -532,14 +811,11 @@ export default function Home() {
     console.log("✅ Entró a generar PDF");
 
     try {
-      // 1) Filtrar por rango (movimientos y facturas)
       const movFiltrados = movimientos.filter((m) => dentroDeRango(m.created_at, desde, hasta));
-
       const facFiltradas = facturas.filter((f) => dentroDeRango(f.fecha || f.created_at, desde, hasta));
 
-      // 2) Totales
       const ingresosMov = movFiltrados
-        .filter((m) => m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA")
+        .filter((m) => m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" || m.type === "VENTA_POS")
         .reduce((acc, m) => acc + Number(m.amount || 0), 0);
 
       const gastosMov = movFiltrados
@@ -555,19 +831,15 @@ export default function Home() {
       const balance = ingresosMov - gastosMov;
       const ivaPorPagar = ivaGenerado - ivaPagado;
 
-      // 3) PDF
       const doc = new jsPDF("p", "mm", "a4");
       const { default: autoTable } = await import("jspdf-autotable");
       const pageWidth = doc.internal.pageSize.getWidth();
 
-      // Logo (opcional, si falla no tumba)
       const logo = await cargarLogoDataUrl("/logo.png");
       if (logo) {
         try {
           doc.addImage(logo, "PNG", 12, 10, 22, 22);
-        } catch {
-          // si el logo no es PNG real, ignoramos
-        }
+        } catch {}
       }
 
       doc.setFont("helvetica", "bold");
@@ -581,7 +853,6 @@ export default function Home() {
       doc.text(`Periodo: ${desde} a ${hasta}`, 12, 38);
       doc.text(`Emitido: ${new Date().toLocaleString()}`, 12, 44);
 
-      // Resumen
       autoTable(doc, {
         startY: 52,
         head: [["Concepto", "Valor"]],
@@ -600,7 +871,6 @@ export default function Home() {
 
       let nextY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : 90;
 
-      // Tabla Movimientos
       doc.setFont("helvetica", "bold");
       doc.setFontSize(12);
       doc.text("Movimientos", 12, nextY);
@@ -608,14 +878,23 @@ export default function Home() {
 
       const movimientosBody = movFiltrados.map((m) => {
         const fecha = new Date(m.created_at).toLocaleString();
-        const tipoTxt = m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "Ingreso" : "Gasto";
+        const tipoTxt = m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" || m.type === "VENTA_POS" ? "Ingreso" : "Gasto";
         const total = Number(m.amount || 0);
         const subtotal = Number(m.subtotal || 0);
         const iva = Number(m.iva || 0);
         const pct = Number(m.porcentaje_iva || 0);
         const fuente = String(m.fund_source || "-");
 
-        return [fecha, tipoTxt, fuente, String(m.description || ""), `$${toMoney(total)}`, `$${toMoney(subtotal)}`, `$${toMoney(iva)}`, `${pct}%`];
+        return [
+          fecha,
+          tipoTxt,
+          fuente,
+          String(m.description || ""),
+          `$${toMoney(total)}`,
+          `$${toMoney(subtotal)}`,
+          `$${toMoney(iva)}`,
+          `${pct}%`,
+        ];
       });
 
       autoTable(doc, {
@@ -629,7 +908,6 @@ export default function Home() {
 
       nextY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : nextY + 40;
 
-      // Tabla Facturas
       doc.setFont("helvetica", "bold");
       doc.setFontSize(12);
       doc.text("Facturas", 12, nextY);
@@ -641,7 +919,16 @@ export default function Home() {
         const iva = Number(f.iva || 0);
         const pct = Number(f.porcentaje_iva || 0);
 
-        return [fecha, String(f.numero || ""), String(f.cliente || ""), `$${toMoney(total)}`, `$${toMoney(subtotal)}`, `$${toMoney(iva)}`, `${pct}%`, String(f.estado || "")];
+        return [
+          fecha,
+          String(f.numero || ""),
+          String(f.cliente || ""),
+          `$${toMoney(total)}`,
+          `$${toMoney(subtotal)}`,
+          `$${toMoney(iva)}`,
+          `${pct}%`,
+          String(f.estado || ""),
+        ];
       });
 
       autoTable(doc, {
@@ -671,6 +958,8 @@ export default function Home() {
         fontFamily: "Arial",
       }}
     >
+      <InventoryDrawer />
+
       <h1 style={{ fontSize: "48px" }}>HST CONTABILIDAD</h1>
       <p style={{ color: "#aaa" }}>Panel financiero Julian Silva</p>
       <p style={{ color: "#00ff88" }}>{status}</p>
@@ -706,7 +995,6 @@ export default function Home() {
             <option value="GASTO">Gasto</option>
           </select>
 
-          {/* NUEVO: Fuente de dinero */}
           <select value={fundSource} onChange={(e) => setFundSource(e.target.value as FundSource)} style={input}>
             <option value="EMPRESA">Dinero: Empresa</option>
             <option value="PERSONAL">Dinero: Personal</option>
@@ -806,7 +1094,6 @@ export default function Home() {
             style={input}
           />
 
-          {/* NUEVO: IVA AUTO / MANUAL */}
           <select value={ivaMode} onChange={(e) => setIvaMode(e.target.value as IvaMode)} style={input}>
             <option value="AUTO">IVA Automático (Base 0% + Base 15%)</option>
             <option value="MANUAL">IVA Manual (tú escribes el IVA)</option>
@@ -842,7 +1129,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* mantenemos el % solo como referencia (no afecta el cálculo AUTO) */}
               <select
                 value={porcentajeIvaFactura}
                 onChange={(e) => setPorcentajeIvaFactura(Number(e.target.value) as 0 | 15)}
@@ -883,12 +1169,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <select
-                value={totalsFacturaUI.iva > 0 ? 15 : 0}
-                onChange={() => {}}
-                style={input}
-                disabled
-              >
+              <select value={totalsFacturaUI.iva > 0 ? 15 : 0} onChange={() => {}} style={input} disabled>
                 <option value={0}>IVA 0%</option>
                 <option value={15}>IVA 15%</option>
               </select>
@@ -907,7 +1188,7 @@ export default function Home() {
           </button>
 
           <p style={{ color: "#888", marginTop: 12, fontSize: 13 }}>
-            * Ahora el IVA de facturas puede ser AUTOMÁTICO por bases 0/15 o MANUAL (tú lo escribes).
+            * IVA de facturas: AUTOMÁTICO por bases 0/15 o MANUAL (tú lo escribes).
           </p>
         </section>
       </div>
@@ -950,44 +1231,52 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody>
-                {movimientos.map((m) => (
-                  <tr key={m.id} style={{ borderTop: "1px solid #2a2a2a" }}>
-                    <td style={td}>{new Date(m.created_at).toLocaleString()}</td>
+                {movimientos.map((m) => {
+                  const esIngreso = m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" || m.type === "VENTA_POS";
+                  const esPOS = String(m.id).startsWith("POS_");
+                  return (
+                    <tr key={m.id} style={{ borderTop: "1px solid #2a2a2a" }}>
+                      <td style={td}>{new Date(m.created_at).toLocaleString()}</td>
 
-                    <td style={td}>{m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "Ingreso" : "Gasto"}</td>
+                      <td style={td}>{esIngreso ? "Ingreso" : "Gasto"}</td>
 
-                    <td style={td}>{String(m.fund_source || "-")}</td>
+                      <td style={td}>{String(m.fund_source || "-")}</td>
 
-                    <td style={td}>
-                      <span
-                        style={{
-                          color: m.type === "VENTA_DIRECTA" || m.type === "PAGO_FACTURA" ? "#00ff88" : "#ff4d4d",
-                          fontWeight: 700,
-                        }}
-                      >
-                        ${Number(m.amount).toFixed(2)}
-                      </span>
-                    </td>
+                      <td style={td}>
+                        <span
+                          style={{
+                            color: esIngreso ? "#00ff88" : "#ff4d4d",
+                            fontWeight: 700,
+                          }}
+                        >
+                          ${Number(m.amount).toFixed(2)}
+                        </span>
+                      </td>
 
-                    <td style={td}>{m.description}</td>
+                      <td style={td}>{m.description}</td>
 
-                    <td style={td}>
-                      <button
-                        onClick={() => eliminarMovimiento(m.id)}
-                        style={{
-                          background: "#300",
-                          color: "#ff4d4d",
-                          border: "1px solid #ff4d4d",
-                          padding: "4px 8px",
-                          borderRadius: 6,
-                          cursor: "pointer",
-                        }}
-                      >
-                        Eliminar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      <td style={td}>
+                        {esPOS ? (
+                          <span style={{ color: "#777", fontSize: 12 }}>POS</span>
+                        ) : (
+                          <button
+                            onClick={() => eliminarMovimiento(m.id)}
+                            style={{
+                              background: "#300",
+                              color: "#ff4d4d",
+                              border: "1px solid #ff4d4d",
+                              padding: "4px 8px",
+                              borderRadius: 6,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Eliminar
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1016,40 +1305,61 @@ export default function Home() {
               </thead>
               <tbody>
                 {facturas.map((f) => {
-                  const pagado = pagadoPorFactura.get(f.id) || 0;
-                  const rest = Math.max(0, Number(f.monto) - pagado);
+                  const esPOS = Boolean((f as any).is_pos);
+
+                  // POS: se asume pagado total
+                  const pagado = esPOS
+                    ? Number(f.monto || 0)
+                    : (() => {
+                        const idNum = typeof f.id === "number" ? f.id : NaN;
+                        return Number.isFinite(idNum) ? pagadoPorFactura.get(idNum) || 0 : 0;
+                      })();
+
+                  const rest = esPOS ? 0 : Math.max(0, Number(f.monto) - pagado);
 
                   return (
-                    <tr key={f.id} style={{ borderTop: "1px solid #2a2a2a" }}>
+                    <tr key={String(f.id)} style={{ borderTop: "1px solid #2a2a2a" }}>
                       <td style={td}>{new Date(f.fecha || f.created_at).toLocaleDateString()}</td>
                       <td style={td}>{f.cliente}</td>
                       <td style={td}>{f.numero}</td>
                       <td style={td}>${Number(f.monto).toFixed(2)}</td>
-                      <td style={td}>${pagado.toFixed(2)}</td>
-                      <td style={td}>${rest.toFixed(2)}</td>
-                      <td style={td}>{f.estado}</td>
+                      <td style={td}>${Number(pagado).toFixed(2)}</td>
+                      <td style={td}>${Number(rest).toFixed(2)}</td>
+                      <td style={td}>{esPOS ? "pagado" : f.estado}</td>
 
                       <td style={td}>
-                        <button style={btnMini} onClick={() => verPdf(f.pdf_url)}>
-                          Ver PDF
-                        </button>{" "}
-                        <button style={btnMini} onClick={() => editarMontoFactura(f)}>
-                          Editar monto
-                        </button>{" "}
-                        {rest > 0 && (
-                          <button style={btnMiniGhost} onClick={() => registrarPago(f)}>
-                            Registrar pago
+                        {f.pdf_url ? (
+                          <button style={btnMini} onClick={() => verPdf(f.pdf_url)}>
+                            Ver PDF
                           </button>
-                        )}{" "}
-                        <button style={btnMiniGhost} onClick={() => setVerPagosDe(f)}>
-                          Ver pagos
-                        </button>{" "}
-                        <button
-                          style={{ ...btnMiniGhost, color: "#ff4d4d", borderColor: "#ff4d4d" }}
-                          onClick={() => eliminarFactura(f)}
-                        >
-                          Eliminar
-                        </button>
+                        ) : (
+                          <button style={{ ...btnMiniGhost, opacity: 0.7 }} onClick={() => verPdf(f.pdf_url)}>
+                            Sin PDF
+                          </button>
+                        )}
+
+                        {!esPOS && (
+                          <>
+                            {" "}
+                            <button style={btnMini} onClick={() => editarMontoFactura(f)}>
+                              Editar monto
+                            </button>{" "}
+                            {rest > 0 && (
+                              <button style={btnMiniGhost} onClick={() => registrarPago(f)}>
+                                Registrar pago
+                              </button>
+                            )}{" "}
+                            <button style={btnMiniGhost} onClick={() => setVerPagosDe(f)}>
+                              Ver pagos
+                            </button>{" "}
+                            <button
+                              style={{ ...btnMiniGhost, color: "#ff4d4d", borderColor: "#ff4d4d" }}
+                              onClick={() => eliminarFactura(f)}
+                            >
+                              Eliminar
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1060,7 +1370,7 @@ export default function Home() {
         )}
       </section>
 
-      {verPagosDe && (
+      {verPagosDe && !verPagosDe.is_pos && (
         <section style={{ ...panel, marginTop: 20 }}>
           <h2 style={{ marginTop: 0 }}>
             Pagos de: {verPagosDe.cliente} (Factura #{verPagosDe.id})
