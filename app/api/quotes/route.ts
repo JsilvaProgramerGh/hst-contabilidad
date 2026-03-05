@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 
 export async function GET(
-  req: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
@@ -29,7 +29,6 @@ export async function GET(
         items,
       },
     });
-
   } catch (err) {
     return NextResponse.json({ error: err });
   }

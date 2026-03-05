@@ -1,33 +1,35 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "../../../lib/supabase-server";
+import { supabaseServer } from "@/lib/supabase-server";
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
-  const sb = supabaseServer();
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
 
-  const { data: quote, error: qErr } = await sb
-    .from("quotes")
-    .select("*")
-    .eq("id", params.id)
-    .single();
+  try {
+    const { data: quote, error } = await supabaseServer
+      .from("quotes")
+      .select("*")
+      .eq("id", id)
+      .single();
 
-  if (qErr) return NextResponse.json({ error: qErr.message }, { status: 400 });
+    if (error) {
+      return NextResponse.json({ error });
+    }
 
-  const { data: items, error: iErr } = await sb
-    .from("quote_items")
-    .select("qty, description, unit, incl_vat")
-    .eq("quote_id", params.id)
-    .order("created_at", { ascending: true });
+    const { data: items } = await supabaseServer
+      .from("quote_items")
+      .select("*")
+      .eq("quote_id", id);
 
-  if (iErr) return NextResponse.json({ error: iErr.message }, { status: 400 });
-
-  return NextResponse.json({ data: { quote, items } });
-}
-
-export async function DELETE(_: Request, { params }: { params: { id: string } }) {
-  const sb = supabaseServer();
-
-  const { error } = await sb.from("quotes").delete().eq("id", params.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      data: {
+        quote,
+        items,
+      },
+    });
+  } catch (err) {
+    return NextResponse.json({ error: err });
+  }
 }
