@@ -3,24 +3,23 @@
 import React, { useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { supabaseBrowser } from "../lib/supabase-browser";
+import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Item = { qty: number; description: string; unit: number; incl_vat: boolean };
 
 const IVA_DEFAULT = 0.15;
 
-// ✅ DATOS EMPRESA (edita cuando quieras)
 const COMPANY = {
   name: "HST GLOBAL STORE",
   ruc: "0962974689001",
-  address: "Dirección: Quevedo, Calle Guatemala y Chile",
+  address: "Dirección: (edítame aquí)",
   city: "Ecuador",
   phone: "WhatsApp: 0982124443",
-  email: "Email: hstglobalstoreventas@gmail.com",
+  email: "Email: (edítame aquí)",
   website: "",
-  logoPath: "/logo.png", // /public/logo.png
-  sealPath: "/seal.png", // opcional /public/seal.png
-  signPath: "/firma.png", // opcional /public/firma.png
+  logoPath: "/logo.png",
+  sealPath: "/seal.png",
+  signPath: "/firma.png",
   accentBlue: [16, 95, 255] as [number, number, number],
 };
 
@@ -57,22 +56,18 @@ async function urlToDataURL(url: string): Promise<string | null> {
 export default function CotizacionPRO() {
   const [tab, setTab] = useState<"nueva" | "historial">("nueva");
 
-  // Quote ID cuando se carga desde historial o al guardar
   const [quoteId, setQuoteId] = useState<string | null>(null);
 
-  // Cabecera
   const [quoteNo, setQuoteNo] = useState(genQuoteNo());
   const [dateStr, setDateStr] = useState(new Date().toISOString().slice(0, 10));
   const [validDays, setValidDays] = useState(15);
 
-  // Cliente
   const [clientName, setClientName] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [clientAddress, setClientAddress] = useState("");
 
-  // Config
   const [ivaRate, setIvaRate] = useState(IVA_DEFAULT);
   const [discount, setDiscount] = useState(0);
   const [delivery, setDelivery] = useState(0);
@@ -94,7 +89,7 @@ export default function CotizacionPRO() {
     { qty: 1, description: "Producto / Servicio", unit: 0, incl_vat: true },
   ]);
 
-  // Historial
+  // historial
   const [list, setList] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [loadingList, setLoadingList] = useState(false);
@@ -135,11 +130,9 @@ export default function CotizacionPRO() {
     const seal = await urlToDataURL(COMPANY.sealPath);
     const sign = await urlToDataURL(COMPANY.signPath);
 
-    // Línea azul superior
     doc.setFillColor(...COMPANY.accentBlue);
     doc.rect(0, 0, pageW, 8, "F");
 
-    // Encabezado
     let y = 18;
 
     if (logo) doc.addImage(logo, "PNG", margin, y - 8, 32, 32);
@@ -162,7 +155,6 @@ export default function CotizacionPRO() {
 
     companyLines.forEach((l, i) => doc.text(String(l), margin + (logo ? 38 : 0), y + 6 + i * 4));
 
-    // Caja datos documento (derecha)
     const boxW = 72;
     const boxX = pageW - margin - boxW;
     const boxY = 14;
@@ -178,7 +170,6 @@ export default function CotizacionPRO() {
     doc.text(`Fecha: ${dateStr}`, boxX + 4, boxY + 17);
     doc.text(`Validez: ${validDays} días`, boxX + 4, boxY + 22);
 
-    // Cliente
     const clientY = 52;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
@@ -194,7 +185,6 @@ export default function CotizacionPRO() {
     doc.text(`Email: ${clientEmail || "-"}`, pageW / 2, clientY + 14);
     doc.text(`Dirección: ${clientAddress || "-"}`, leftX, clientY + 19);
 
-    // Tabla
     const tableY = clientY + 30;
 
     autoTable(doc, {
@@ -223,9 +213,8 @@ export default function CotizacionPRO() {
       },
     });
 
-    const afterTableY = (doc as any).lastAutoTable.finalY + 6;
+    const afterTableY = ((doc as any).lastAutoTable?.finalY ?? tableY + 40) + 6;
 
-    // Totales derecha
     const totalsBoxW = 82;
     const totalsBoxX = pageW - margin - totalsBoxW;
     const totalsBoxY = afterTableY;
@@ -259,7 +248,6 @@ export default function CotizacionPRO() {
     ty += 5;
     line("Saldo:", `$ ${money(totals.saldo)}`, ty, true);
 
-    // Notas + términos
     let textY = totalsBoxY + 54;
 
     doc.setFont("helvetica", "bold");
@@ -278,12 +266,10 @@ export default function CotizacionPRO() {
     doc.setFontSize(9);
     doc.text(doc.splitTextToSize((terms || "-").trim(), pageW - margin * 2), margin, textY + 5);
 
-    // Firma / sello opcional
     const footerY = 270;
     if (sign) doc.addImage(sign, "PNG", pageW - margin - 55, footerY - 18, 50, 18);
     if (seal) doc.addImage(seal, "PNG", pageW - margin - 28, footerY - 8, 24, 24);
 
-    // Pie
     doc.setFontSize(8);
     doc.setTextColor(120);
     doc.text(`${COMPANY.name} — Documento generado desde HST Contabilidad`, margin, 289);
@@ -306,7 +292,7 @@ export default function CotizacionPRO() {
   const uploadPDFandGetUrl = async (): Promise<string | null> => {
     const sb = supabaseBrowser();
     const doc = await buildPDF();
-    const blob = doc.output("blob");
+    const blob = doc.output("blob") as unknown as Blob;
     const path = `quotes/${quoteNo}.pdf`;
 
     const { error } = await sb.storage.from("docs").upload(path, blob, {
@@ -362,7 +348,6 @@ export default function CotizacionPRO() {
     const json = await res.json();
     if (!res.ok) return alert(json.error || "Error guardando cotización");
 
-    // tu API responde { data: { quote: q } }
     const id = json?.data?.quote?.id ?? null;
     setQuoteId(id);
 
@@ -375,7 +360,11 @@ export default function CotizacionPRO() {
       const res = await fetch("/api/quotes");
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
-      setList(json.data || []);
+
+      const arr =
+        Array.isArray(json?.data) ? json.data : Array.isArray(json?.data?.quotes) ? json.data.quotes : [];
+
+      setList(arr);
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -444,7 +433,6 @@ export default function CotizacionPRO() {
     alert(`✅ Convertido a FACTURA ${json.data.invoice_no}`);
   };
 
-  // ✅ WhatsApp: si ya existe pdf_url en BD, úsalo; si no, sube
   const whatsappShare = async () => {
     let link: string | null = null;
 
@@ -468,45 +456,32 @@ export default function CotizacionPRO() {
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
-  // ✅ EMAIL: llama al endpoint /api/quotes/[id]/email
- const emailSend = async () => {
-  if (!quoteId) {
-    alert("Primero guarda la cotización.");
-    return;
-  }
+  const emailSend = async () => {
+    if (!quoteId) return alert("Primero guarda la cotización.");
+    if (!clientEmail?.trim()) return alert("Falta el email del cliente.");
 
-  if (!clientEmail?.trim()) {
-    alert("Falta el email del cliente.");
-    return;
-  }
+    let link: string | null = null;
 
-  // verificar si ya existe pdf_url
-  let link: string | null = null;
+    try {
+      const r = await fetch(`/api/quotes/${quoteId}`);
+      const j = await r.json();
+      if (r.ok) link = j?.data?.quote?.pdf_url || null;
+    } catch {}
 
-  try {
-    const r = await fetch(`/api/quotes/${quoteId}`);
+    if (!link) link = await uploadPDFandGetUrl();
+
+    const r = await fetch(`/api/quotes/${quoteId}/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: clientEmail, pdf_url: link }),
+    });
+
     const j = await r.json();
-    if (r.ok) link = j?.data?.quote?.pdf_url || null;
-  } catch {}
 
-  // si no existe PDF lo subimos automáticamente
-  if (!link) {
-    link = await uploadPDFandGetUrl();
-  }
+    if (!r.ok) return alert(j.error || "Error enviando email");
 
-  const r = await fetch(`/api/quotes/${quoteId}/email`, {
-    method: "POST",
-  });
-
-  const j = await r.json();
-
-  if (!r.ok) {
-    alert(j.error || "Error enviando email");
-    return;
-  }
-
-  alert("✅ Cotización enviada al correo del cliente.");
-};
+    alert("✅ Cotización enviada al correo del cliente.");
+  };
 
   const addItem = () => setItems((p) => [...p, { qty: 1, description: "", unit: 0, incl_vat: true }]);
   const removeItem = (idx: number) => setItems((p) => p.filter((_, i) => i !== idx));
@@ -574,14 +549,15 @@ export default function CotizacionPRO() {
                   <Th>Fecha</Th>
                   <Th>Cliente</Th>
                   <Th>PDF</Th>
-                  <Th></Th>
+                  <Th style={{ textAlign: "right" }}></Th>
                 </tr>
               </thead>
+
               <tbody>
                 {loadingList ? (
                   <tr>
                     <td colSpan={5} style={{ padding: 14, color: "#9aa0a6" }}>
-                      Cargando…
+                      Cargando...
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
@@ -755,7 +731,6 @@ export default function CotizacionPRO() {
                 </div>
               </div>
 
-              {/* ✅ BOTONES */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
                 <button onClick={downloadPDF} style={btnPrimary()}>
                   ⬇️ PDF
@@ -775,15 +750,9 @@ export default function CotizacionPRO() {
                   🧾 Convertir a Factura
                 </button>
 
-                {/* ✅ NUEVO: ENVIAR EMAIL PRO */}
                 <button onClick={emailSend} style={btnPrimary()}>
                   ✉️ Enviar Email
                 </button>
-              </div>
-
-              <div style={{ color: "#9aa0a6", fontSize: 12, marginTop: 10 }}>
-                ✅ “Guardar + Subir PDF” crea un link público para enviar al cliente. <br />
-                ✅ “Enviar Email” requiere que exista el endpoint /api/quotes/[id]/email y que el cliente tenga email.
               </div>
             </div>
           </div>
@@ -791,7 +760,7 @@ export default function CotizacionPRO() {
           <div style={{ ...card(), marginTop: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }}>
               <div style={{ fontWeight: 900 }}>📦 Detalle</div>
-              <button onClick={addItem} style={btn()}>
+              <button onClick={() => setItems((p) => [...p, { qty: 1, description: "", unit: 0, incl_vat: true }])} style={btn()}>
                 + Agregar línea
               </button>
             </div>
@@ -803,12 +772,13 @@ export default function CotizacionPRO() {
                     <Th>Cant.</Th>
                     <Th>Descripción</Th>
                     <Th>P. Unitario</Th>
-                    <Th>IVA</Th>
-                    <Th>P.U. con IVA</Th>
-                    <Th>Total</Th>
-                    <Th></Th>
+                    <Th style={{ textAlign: "center" }}>IVA</Th>
+                    <Th style={{ textAlign: "right" }}>P.U. con IVA</Th>
+                    <Th style={{ textAlign: "right" }}>Total</Th>
+                    <Th style={{ textAlign: "right" }}></Th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {totals.lines.map((l, idx) => (
                     <tr key={idx} style={{ borderBottom: "1px solid #1f2a44" }}>
@@ -822,6 +792,7 @@ export default function CotizacionPRO() {
                           onChange={(e) => updateItem(idx, { qty: Number(e.target.value) })}
                         />
                       </Td>
+
                       <Td>
                         <input
                           style={input()}
@@ -829,6 +800,7 @@ export default function CotizacionPRO() {
                           onChange={(e) => updateItem(idx, { description: e.target.value })}
                         />
                       </Td>
+
                       <Td>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <span style={{ color: "#9aa0a6" }}>$</span>
@@ -842,6 +814,7 @@ export default function CotizacionPRO() {
                           />
                         </div>
                       </Td>
+
                       <Td style={{ textAlign: "center" }}>
                         <input
                           type="checkbox"
@@ -849,8 +822,10 @@ export default function CotizacionPRO() {
                           onChange={(e) => updateItem(idx, { incl_vat: e.target.checked })}
                         />
                       </Td>
+
                       <Td style={{ textAlign: "right", paddingRight: 12 }}>$ {money(l.unitWithVat)}</Td>
                       <Td style={{ textAlign: "right", paddingRight: 12, fontWeight: 900 }}>$ {money(l.total)}</Td>
+
                       <Td style={{ textAlign: "right" }}>
                         <button onClick={() => removeItem(idx)} style={dangerBtn()}>
                           ✖
@@ -887,7 +862,7 @@ export default function CotizacionPRO() {
   );
 }
 
-/* UI */
+/* ✅ UI helpers */
 function card(): React.CSSProperties {
   return { border: "1px solid #1f2a44", background: "#0a0f1d", borderRadius: 16, padding: 14 };
 }
@@ -964,24 +939,39 @@ function tabBtn(active: boolean): React.CSSProperties {
     cursor: "pointer",
   };
 }
-function Th({ children }: { children: React.ReactNode }) {
+
+/** ✅ FIX CLAVE: Th/Td aceptan props style/colSpan/etc */
+type THProps = React.ThHTMLAttributes<HTMLTableCellElement>;
+type TDProps = React.TdHTMLAttributes<HTMLTableCellElement>;
+
+function Th(props: THProps) {
+  const { children, style, ...rest } = props;
   return (
     <th
+      {...rest}
       style={{
         textAlign: "left",
         padding: 10,
         fontSize: 12,
         color: "#cbd5e1",
         borderBottom: "1px solid #1f2a44",
+        ...(style || {}),
       }}
     >
       {children}
     </th>
   );
 }
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: 10, verticalAlign: "top" }}>{children}</td>;
+
+function Td(props: TDProps) {
+  const { children, style, ...rest } = props;
+  return (
+    <td {...rest} style={{ padding: 10, verticalAlign: "top", ...(style || {}) }}>
+      {children}
+    </td>
+  );
 }
+
 function Mini({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
   return (
     <div style={{ border: "1px solid #1f2a44", background: "#0b1220", borderRadius: 14, padding: 10 }}>
