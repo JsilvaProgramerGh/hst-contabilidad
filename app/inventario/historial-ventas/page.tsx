@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 type Log = {
@@ -87,7 +87,7 @@ export default function HistorialVentas() {
     return Array.from(u.entries()).sort((a, b) => a[1].localeCompare(b[1])).map(([id, label]) => ({ id, label }));
   }, [products, catLabel]);
 
-  function titleFor(log: Log) {
+  const titleFor = useCallback((log: Log) => {
     if (log.kind === "product") {
       const p = prodMap.get(log.ref_id);
       return p ? p.name : "(producto eliminado)";
@@ -96,14 +96,14 @@ export default function HistorialVentas() {
     if (!v) return "(variante eliminada)";
     const p = prodMap.get(v.product_id);
     return p ? `${p.name} — ${v.name}` : `(producto eliminado) — ${v.name}`;
-  }
+  }, [prodMap, varMap])
 
-  function categoryIdFor(log: Log): string | null {
+  const categoryIdFor = useCallback((log: Log): string | null => {
     if (log.kind === "product") return prodMap.get(log.ref_id)?.category_id ?? null;
     const v = varMap.get(log.ref_id);
     if (!v) return null;
     return prodMap.get(v.product_id)?.category_id ?? null;
-  }
+  }, [prodMap, varMap])
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -115,7 +115,7 @@ export default function HistorialVentas() {
       const n = (l.note || "").toLowerCase();
       return `${t} ${n}`.includes(query);
     });
-  }, [logs, q, catFilter, prodMap, varMap]);
+  }, [logs, q, catFilter, categoryIdFor, titleFor]);
 
   // ✅ función principal: devolver stock + marcar anulado
   async function cancelSale(log: Log) {

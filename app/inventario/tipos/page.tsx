@@ -58,7 +58,7 @@ export default function TiposCamposPage() {
   useEffect(() => {
     if (selectedTypeId) loadFields(selectedTypeId);
     else setFields([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selectedTypeId]);
 
   async function loadTypes() {

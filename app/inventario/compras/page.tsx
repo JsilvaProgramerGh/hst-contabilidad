@@ -172,7 +172,7 @@ export default function ComprasPage() {
         const vMap = new Map((vData as any[]).map((v) => [v.id, v]));
         const productIds = [...new Set((vData as any[]).map((v) => v.product_id))];
 
-        let pMap = new Map<string, any>();
+        const pMap = new Map<string, any>();
         if (productIds.length) {
           const { data: pData } = await supabase
             .from("inv_products")
@@ -243,7 +243,7 @@ export default function ComprasPage() {
         const variants: VariantRow[] = ((vData as any) || []) as VariantRow[];
 
         const productIds = [...new Set(variants.map((v) => v.product_id))];
-        let pMap = new Map<string, any>();
+        const pMap = new Map<string, any>();
         if (productIds.length) {
           const { data: pData } = await supabase
             .from("inv_products")

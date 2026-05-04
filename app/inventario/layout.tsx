@@ -1,126 +1,199 @@
 "use client";
 
-import React from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import type { CSSProperties, ReactNode } from "react";
 
-export default function InventarioLayout({ children }: { children: React.ReactNode }) {
+const navItems = [
+  { href: "/inventario", label: "Inventario" },
+];
+
+export default function InventarioLayout({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+
   return (
-    <div style={wrap}>
+    <div style={shell}>
       <aside style={sidebar}>
-        <div style={brand}>
-          <div style={brandTitle}>HST INVENTARIO</div>
-          <div style={brandSub}>Sistema de gestión</div>
+        <div style={brandCard}>
+          <div style={eyebrow}>HST Suite</div>
+          <div style={brandTitle}>Inventario</div>
+          <p style={brandCopy}>Una sola vista para registrar productos, variantes y consultar tu catalogo sin saltar entre modulos.</p>
         </div>
 
         <nav style={nav}>
-          <a href="/inventario" style={link}>🏠 Inicio</a>
-          <a href="/inventario/productos" style={link}>📦 Productos</a>
-          <a href="/inventario/compras" style={link}>🧾 Compras</a>
-          <a href="/inventario/calculadora-pvp" style={link}>🧮 Calculadora PVP</a>
-          <a href="/inventario/stock" style={link}>📦 Inventario (Stock)</a>
-          <a href="/inventario/venta" style={link}>💰 Venta (POS)</a>
-          <a href="/inventario/reportes" style={link}>📊 Reportes</a>
-
-          <a href="/inventario/tipos" style={linkSoft}>⚙️ Tipos y Campos</a>
+          {navItems.map((item) => {
+            const active = pathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                style={{
+                  ...navLink,
+                  ...(active ? navLinkActive : null),
+                }}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
 
-        <div style={divider} />
-
-        <a href="/" style={backHome}>← Volver a Contabilidad</a>
-
-        <div style={footer}>
-          <div style={{ color: "#777", fontSize: 11 }}>
-            HST Global Store · Inventario
-          </div>
+        <div style={sideFooter}>
+          <Link href="/" style={backLink}>
+            Volver a contabilidad
+          </Link>
+          <p style={footerCopy}>Diseno actualizado para trabajar mejor en desktop y movil.</p>
         </div>
       </aside>
 
-      <main style={content}>{children}</main>
+      <div style={mainColumn}>
+        <header style={mobileHeader}>
+          <div>
+            <div style={mobileEyebrow}>HST</div>
+            <div style={mobileTitle}>Inventario</div>
+          </div>
+          <Link href="/" style={mobileBack}>
+            Contabilidad
+          </Link>
+        </header>
+
+        <main style={content}>{children}</main>
+      </div>
     </div>
   );
 }
 
-const wrap: React.CSSProperties = {
+const shell: CSSProperties = {
   minHeight: "100vh",
-  background: "#0b0b0b",
   display: "grid",
-  gridTemplateColumns: "280px 1fr",
+  gridTemplateColumns: "300px minmax(0, 1fr)",
+  background:
+    "radial-gradient(circle at top left, rgba(86,149,255,0.16), transparent 26%), linear-gradient(180deg, #0b1220 0%, #0f172a 100%)",
 };
 
-const sidebar: React.CSSProperties = {
+const sidebar: CSSProperties = {
   position: "sticky",
   top: 0,
-  alignSelf: "start",
   height: "100vh",
-  borderRight: "1px solid #222",
-  background: "#0b0b0b",
-  padding: 16,
+  overflowY: "auto",
+  padding: 24,
   display: "flex",
   flexDirection: "column",
-  gap: 12,
+  gap: 18,
+  borderRight: "1px solid rgba(148, 163, 184, 0.14)",
+  background: "rgba(9, 15, 27, 0.88)",
+  backdropFilter: "blur(18px)",
+  paddingBottom: 32,
 };
 
-const brand: React.CSSProperties = {
-  border: "1px solid #2a2a2a",
-  borderRadius: 14,
-  padding: 12,
-  background: "#111",
+const brandCard: CSSProperties = {
+  padding: 20,
+  borderRadius: 24,
+  background: "linear-gradient(180deg, rgba(18,30,48,0.98) 0%, rgba(11,18,31,0.98) 100%)",
+  border: "1px solid rgba(148, 163, 184, 0.14)",
+  boxShadow: "0 18px 32px rgba(0,0,0,0.18)",
 };
 
-const brandTitle: React.CSSProperties = {
-  color: "#d4af37",
-  fontWeight: 900,
-  fontSize: 16,
-  letterSpacing: 0.5,
-};
-
-const brandSub: React.CSSProperties = {
-  color: "#aaa",
+const eyebrow: CSSProperties = {
+  color: "#8fb7ff",
   fontSize: 12,
-  marginTop: 4,
+  letterSpacing: 1.6,
+  textTransform: "uppercase",
+  fontWeight: 700,
 };
 
-const nav: React.CSSProperties = {
-  display: "grid",
-  gap: 8,
-};
-
-const link: React.CSSProperties = {
-  display: "block",
-  padding: "10px 12px",
-  borderRadius: 12,
-  border: "1px solid #222",
-  background: "#111",
-  color: "#fff",
-  textDecoration: "none",
+const brandTitle: CSSProperties = {
+  marginTop: 8,
+  color: "#f8fafc",
+  fontSize: 30,
   fontWeight: 800,
 };
 
-const linkSoft: React.CSSProperties = {
-  ...link,
-  border: "1px solid #5a4b2b",
-  background: "#14110a",
-  color: "#ffe2a8",
+const brandCopy: CSSProperties = {
+  margin: "10px 0 0",
+  color: "#94a3b8",
+  lineHeight: 1.5,
+  fontSize: 14,
 };
 
-const divider: React.CSSProperties = {
-  height: 1,
-  background: "#222",
-  marginTop: 8,
+const nav: CSSProperties = {
+  display: "grid",
+  gap: 10,
 };
 
-const backHome: React.CSSProperties = {
-  marginTop: 6,
-  color: "#aaa",
+const navLink: CSSProperties = {
+  display: "block",
+  padding: "13px 16px",
+  borderRadius: 16,
+  color: "#e8eff8",
+  textDecoration: "none",
+  fontWeight: 700,
+  background: "rgba(15, 23, 37, 0.88)",
+  border: "1px solid rgba(148, 163, 184, 0.12)",
+  transition: "all 140ms ease",
+};
+
+const navLinkActive: CSSProperties = {
+  background: "linear-gradient(135deg, rgba(96,165,250,0.22), rgba(59,130,246,0.1))",
+  border: "1px solid rgba(96,165,250,0.28)",
+  color: "#eff6ff",
+  boxShadow: "0 12px 26px rgba(0,0,0,0.18)",
+};
+
+const sideFooter: CSSProperties = {
+  marginTop: "auto",
+  paddingTop: 18,
+  borderTop: "1px solid rgba(137, 160, 185, 0.12)",
+};
+
+const backLink: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
+  color: "#93c5fd",
   textDecoration: "none",
   fontWeight: 700,
 };
 
-const footer: React.CSSProperties = {
-  marginTop: "auto",
-  paddingTop: 8,
+const footerCopy: CSSProperties = {
+  margin: "10px 0 0",
+  color: "#94a3b8",
+  fontSize: 13,
+  lineHeight: 1.5,
 };
 
-const content: React.CSSProperties = {
-  padding: 24,
-  color: "#d4af37",
+const mainColumn: CSSProperties = {
+  minWidth: 0,
+};
+
+const mobileHeader: CSSProperties = {
+  display: "none",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: "18px 18px 0",
+};
+
+const mobileEyebrow: CSSProperties = {
+  color: "#8fb7ff",
+  fontSize: 11,
+  letterSpacing: 1.4,
+  textTransform: "uppercase",
+  fontWeight: 700,
+};
+
+const mobileTitle: CSSProperties = {
+  color: "#f7fbff",
+  fontSize: 24,
+  fontWeight: 800,
+};
+
+const mobileBack: CSSProperties = {
+  color: "#93c5fd",
+  textDecoration: "none",
+  fontWeight: 700,
+};
+
+const content: CSSProperties = {
+  padding: 28,
+  color: "#e8eff8",
 };

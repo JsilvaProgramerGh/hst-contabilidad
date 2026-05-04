@@ -54,13 +54,13 @@ export default function StockPage() {
       cargar(q.trim());
     }, 250);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [q]);
 
   // Carga inicial: si quieres, trae los últimos (vacío = muestra algo)
   useEffect(() => {
     cargar("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   async function cargar(query: string) {

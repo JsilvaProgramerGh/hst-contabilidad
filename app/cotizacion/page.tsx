@@ -1,10 +1,20 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabaseBrowser } from "@/lib/supabase-browser";
-type Item = { qty: number; description: string; unit: number; incl_vat: boolean };
+type Item = { qty: string; description: string; unit: string; incl_vat: boolean };
+type Customer = {
+  id: string;
+  document_type: string | null;
+  document_number: string | null;
+  display_name: string | null;
+  legal_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+};
 
 const IVA_DEFAULT = 0.15;
 
@@ -14,7 +24,7 @@ const COMPANY = {
   address: "Dirección: Quevedo, calle guatemala y chile",
   city: "Ecuador",
   phone: "WhatsApp: 0982124443",
-  email: "Email: hstglobalstoreventas@gmail.com",
+  email: "Email: ventas@hstglobalstore.com",
   website: "",
   logoPath: "/logo.png",
   sealPath: "/seal.png",
@@ -25,6 +35,22 @@ const COMPANY = {
 function money(n: number) {
   const v = Number.isFinite(n) ? n : 0;
   return v.toLocaleString("es-EC", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function normalizeNumericInput(value: string) {
+  return value.replace(",", ".");
+}
+
+function decimalValue(value: string | number | null | undefined) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const parsed = Number.parseFloat(normalizeNumericInput(String(value ?? "").trim()));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function integerValue(value: string | number | null | undefined, fallback = 0) {
+  if (String(value ?? "").trim() === "") return fallback;
+  const parsed = Number.parseInt(normalizeNumericInput(String(value ?? "").trim()), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function genQuoteNo() {
@@ -66,11 +92,16 @@ export default function CotizacionPRO() {
   const [clientPhone, setClientPhone] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [clientAddress, setClientAddress] = useState("");
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerResults, setCustomerResults] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [customerTableReady, setCustomerTableReady] = useState(true);
 
   const [ivaRate, setIvaRate] = useState(IVA_DEFAULT);
-  const [discount, setDiscount] = useState(0);
-  const [delivery, setDelivery] = useState(0);
-  const [paid, setPaid] = useState(0);
+  const [discount, setDiscount] = useState("");
+  const [delivery, setDelivery] = useState("");
+  const [paid, setPaid] = useState("");
 
   const [terms, setTerms] = useState(
     [
@@ -85,7 +116,7 @@ export default function CotizacionPRO() {
   const [notes, setNotes] = useState("Gracias por preferirnos.");
 
   const [items, setItems] = useState<Item[]>([
-    { qty: 1, description: "Producto / Servicio", unit: 0, incl_vat: true },
+    { qty: "1", description: "", unit: "", incl_vat: true },
   ]);
 
   // historial
@@ -93,10 +124,85 @@ export default function CotizacionPRO() {
   const [search, setSearch] = useState("");
   const [loadingList, setLoadingList] = useState(false);
 
+  useEffect(() => {
+    let active = true;
+    const sb = supabaseBrowser();
+    const value = customerQuery.trim();
+
+    if (!value) {
+      setCustomerResults([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setLoadingCustomers(true);
+      const { data, error } = await sb
+        .from("customers")
+        .select("id,document_type,document_number,display_name,legal_name,email,phone,address")
+        .or(
+          `display_name.ilike.%${value}%,legal_name.ilike.%${value}%,document_number.ilike.%${value}%,email.ilike.%${value}%,phone.ilike.%${value}%`,
+        )
+        .limit(8);
+
+      if (!active) return;
+
+      if (error) {
+        setCustomerTableReady(false);
+        setCustomerResults([]);
+      } else {
+        setCustomerTableReady(true);
+        setCustomerResults((data as Customer[]) || []);
+      }
+      setLoadingCustomers(false);
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [customerQuery]);
+
+  useEffect(() => {
+    let active = true;
+    const sb = supabaseBrowser();
+    const value = clientId.trim();
+
+    if (!value || value.length < 6 || !customerTableReady) return;
+
+    const timer = setTimeout(async () => {
+      const { data, error } = await sb
+        .from("customers")
+        .select("id,document_type,document_number,display_name,legal_name,email,phone,address")
+        .eq("document_number", value)
+        .limit(1)
+        .maybeSingle();
+
+      if (!active || error || !data) return;
+      const customer = data as Customer;
+      if (selectedCustomer?.id === customer.id) return;
+
+      applyCustomer(customer, {
+        setClientName,
+        setClientId,
+        setClientPhone,
+        setClientEmail,
+        setClientAddress,
+        setCustomerQuery,
+        setCustomerResults,
+        setSelectedCustomer,
+      });
+    }, 260);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [clientId, customerTableReady, selectedCustomer]);
+
   const totals = useMemo(() => {
     const lines = items.map((it) => {
-      const qty = Number(it.qty) || 0;
-      const unit = Number(it.unit) || 0;
+      const qty = decimalValue(it.qty);
+      const unit = decimalValue(it.unit);
       const sub = qty * unit;
       const vat = it.incl_vat ? sub * ivaRate : 0;
       const unitWithVat = it.incl_vat ? unit * (1 + ivaRate) : unit;
@@ -107,12 +213,12 @@ export default function CotizacionPRO() {
     const subtotal = lines.reduce((a, b) => a + b.sub, 0);
     const iva = lines.reduce((a, b) => a + b.vat, 0);
 
-    const disc = Math.max(0, Number(discount) || 0);
-    const del = Math.max(0, Number(delivery) || 0);
+    const disc = Math.max(0, decimalValue(discount));
+    const del = Math.max(0, decimalValue(delivery));
     const neto = Math.max(0, subtotal - disc);
     const totalFinal = Math.max(0, neto + iva + del);
 
-    const paidVal = Math.max(0, Number(paid) || 0);
+    const paidVal = Math.max(0, decimalValue(paid));
     const saldo = Math.max(0, totalFinal - paidVal);
 
     return { lines, subtotal, iva, disc, neto, del, totalFinal, paidVal, saldo };
@@ -132,7 +238,7 @@ export default function CotizacionPRO() {
     doc.setFillColor(...COMPANY.accentBlue);
     doc.rect(0, 0, pageW, 8, "F");
 
-    let y = 18;
+    const y = 18;
 
     if (logo) doc.addImage(logo, "PNG", margin, y - 8, 32, 32);
 
@@ -316,24 +422,24 @@ export default function CotizacionPRO() {
       quote: {
         quote_no: quoteNo,
         date: dateStr,
-        valid_days: validDays,
+        valid_days: integerValue(validDays, 15),
         client_name: clientName,
         client_id: clientId,
         client_phone: clientPhone,
         client_email: clientEmail,
         client_address: clientAddress,
         iva_rate: ivaRate,
-        discount,
-        delivery,
-        paid,
+        discount: decimalValue(discount),
+        delivery: decimalValue(delivery),
+        paid: decimalValue(paid),
         terms,
         notes,
         pdf_url: pdf_url ?? undefined,
       },
       items: items.map((it) => ({
-        qty: it.qty,
+        qty: decimalValue(it.qty),
         description: it.description,
-        unit: it.unit,
+        unit: decimalValue(it.unit),
         incl_vat: it.incl_vat,
       })),
     };
@@ -382,27 +488,30 @@ export default function CotizacionPRO() {
     setQuoteId(q.id);
     setQuoteNo(q.quote_no);
     setDateStr(String(q.date));
-    setValidDays(q.valid_days);
+    setValidDays(Number(q.valid_days ?? 15));
 
     setClientName(q.client_name || "");
     setClientId(q.client_id || "");
     setClientPhone(q.client_phone || "");
     setClientEmail(q.client_email || "");
     setClientAddress(q.client_address || "");
+    setSelectedCustomer(null);
+    setCustomerQuery(q.client_name || q.client_id || "");
+    setCustomerResults([]);
 
     setIvaRate(Number(q.iva_rate ?? IVA_DEFAULT));
-    setDiscount(Number(q.discount ?? 0));
-    setDelivery(Number(q.delivery ?? 0));
-    setPaid(Number(q.paid ?? 0));
+    setDiscount(q.discount ? String(q.discount) : "");
+    setDelivery(q.delivery ? String(q.delivery) : "");
+    setPaid(q.paid ? String(q.paid) : "");
 
     setTerms(q.terms || "");
     setNotes(q.notes || "");
 
     setItems(
       (its || []).map((x) => ({
-        qty: Number(x.qty ?? 1),
+        qty: x.qty != null ? String(x.qty) : "1",
         description: String(x.description ?? ""),
-        unit: Number(x.unit ?? 0),
+        unit: x.unit != null && Number(x.unit) !== 0 ? String(x.unit) : "",
         incl_vat: Boolean(x.incl_vat ?? true),
       }))
     );
@@ -482,7 +591,6 @@ export default function CotizacionPRO() {
     alert("✅ Cotización enviada al correo del cliente.");
   };
 
-  const addItem = () => setItems((p) => [...p, { qty: 1, description: "", unit: 0, incl_vat: true }]);
   const removeItem = (idx: number) => setItems((p) => p.filter((_, i) => i !== idx));
   const updateItem = (idx: number, patch: Partial<Item>) =>
     setItems((p) => p.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -500,7 +608,7 @@ export default function CotizacionPRO() {
   return (
     <div style={{ padding: 18, maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <h1 style={{ fontSize: 34, margin: 0 }}>🧾 Cotización PRO</h1>
+        <h1 style={{ fontSize: 38, margin: 0, color: "#f8fafc" }}>Cotizaciones</h1>
 
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setTab("nueva")} style={tabBtn(tab === "nueva")}>
@@ -519,13 +627,13 @@ export default function CotizacionPRO() {
       </div>
 
       <div style={{ color: "#9aa0a6", marginTop: 6 }}>
-        Logo: <b>/public/logo.png</b> — Firma: <b>/public/firma.png</b> — Sello: <b>/public/seal.png</b> (opcionales)
+        Usa tu identidad visual con logo, firma y sello para entregar cotizaciones limpias y profesionales.
       </div>
 
       {tab === "historial" ? (
         <div style={{ ...card(), marginTop: 14 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ fontWeight: 900 }}>📚 Historial de cotizaciones</div>
+            <div style={{ fontWeight: 900 }}>Historial de cotizaciones</div>
             <button onClick={loadList} style={btn()}>
               ↻ Actualizar
             </button>
@@ -648,15 +756,127 @@ export default function CotizacionPRO() {
 
           <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10, marginTop: 12 }}>
             <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 10 }}>👤 Datos del cliente</div>
+              <div style={{ fontWeight: 900, marginBottom: 10 }}>Datos del cliente</div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={label()}>Buscar cliente guardado</label>
+                <input
+                  style={input()}
+                  value={customerQuery}
+                  onChange={(e) => setCustomerQuery(e.target.value)}
+                  placeholder="Nombre, cedula o RUC"
+                />
+                {loadingCustomers ? (
+                  <div style={{ color: "#9aa0a6", marginTop: 6, fontSize: 12 }}>Buscando clientes...</div>
+                ) : null}
+                {!customerTableReady ? (
+                  <div style={{ color: "#f0c36b", marginTop: 6, fontSize: 12 }}>
+                    La tabla `customers` todavia no esta lista en Supabase.
+                  </div>
+                ) : null}
+                {selectedCustomer ? (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      padding: 12,
+                      borderRadius: 14,
+                      border: "1px solid rgba(96, 165, 250, 0.24)",
+                      background: "rgba(59, 130, 246, 0.12)",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 900, color: "#dbeafe" }}>
+                        Cliente cargado automaticamente
+                      </div>
+                      <div style={{ color: "#bfdbfe", fontSize: 12 }}>
+                        {[
+                          selectedCustomer.display_name || selectedCustomer.legal_name || "Sin nombre",
+                          selectedCustomer.document_number,
+                          selectedCustomer.email,
+                        ]
+                          .filter(Boolean)
+                          .join(" - ")}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCustomer(null);
+                        setCustomerQuery("");
+                        setCustomerResults([]);
+                      }}
+                      style={btn()}
+                    >
+                      Limpiar seleccion
+                    </button>
+                  </div>
+                ) : null}
+                {customerResults.length > 0 ? (
+                  <div style={{ marginTop: 8, border: "1px solid #1f2a44", borderRadius: 14, overflow: "hidden" }}>
+                    {customerResults.map((customer) => (
+                      <button
+                        key={customer.id}
+                        type="button"
+                        onClick={() =>
+                          fillCustomer(customer, {
+                            setClientName,
+                            setClientId,
+                            setClientPhone,
+                            setClientEmail,
+                            setClientAddress,
+                            setCustomerQuery,
+                            setCustomerResults,
+                            setSelectedCustomer,
+                          })
+                        }
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          padding: 12,
+                          border: "none",
+                          borderTop: "1px solid #1f2a44",
+                          background: "#0b1220",
+                          color: "white",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <div style={{ fontWeight: 900 }}>{customer.display_name || customer.legal_name || "-"}</div>
+                        <div style={{ color: "#9aa0a6", fontSize: 12 }}>
+                          {[customer.document_type, customer.document_number, customer.email].filter(Boolean).join(" · ")}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
                   <label style={label()}>Nombre</label>
-                  <input style={input()} value={clientName} onChange={(e) => setClientName(e.target.value)} />
+                  <input
+                    style={input()}
+                    value={clientName}
+                    onChange={(e) => {
+                      setClientName(e.target.value);
+                      setCustomerQuery(e.target.value);
+                    }}
+                  />
                 </div>
                 <div>
                   <label style={label()}>CI / RUC</label>
-                  <input style={input()} value={clientId} onChange={(e) => setClientId(e.target.value)} />
+                  <input
+                    style={input()}
+                    value={clientId}
+                    onChange={(e) => {
+                      setClientId(e.target.value);
+                      if (selectedCustomer && e.target.value.trim() !== (selectedCustomer.document_number || "")) {
+                        setSelectedCustomer(null);
+                      }
+                    }}
+                  />
                 </div>
                 <div>
                   <label style={label()}>Teléfono</label>
@@ -674,40 +894,37 @@ export default function CotizacionPRO() {
             </div>
 
             <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 10 }}>⚡ Acciones</div>
+              <div style={{ fontWeight: 900, marginBottom: 10 }}>Acciones</div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
                   <label style={label()}>Descuento ($)</label>
                   <input
                     style={input()}
-                    type="number"
-                    min={0}
-                    step="0.01"
+                    inputMode="decimal"
                     value={discount}
-                    onChange={(e) => setDiscount(Number(e.target.value))}
+                    onChange={(e) => setDiscount(normalizeNumericInput(e.target.value))}
+                    placeholder="Ej. 5,50"
                   />
                 </div>
                 <div>
                   <label style={label()}>Delivery ($)</label>
                   <input
                     style={input()}
-                    type="number"
-                    min={0}
-                    step="0.01"
+                    inputMode="decimal"
                     value={delivery}
-                    onChange={(e) => setDelivery(Number(e.target.value))}
+                    onChange={(e) => setDelivery(normalizeNumericInput(e.target.value))}
+                    placeholder="Ej. 2.00"
                   />
                 </div>
                 <div>
                   <label style={label()}>Pagado ($)</label>
                   <input
                     style={input()}
-                    type="number"
-                    min={0}
-                    step="0.01"
+                    inputMode="decimal"
                     value={paid}
-                    onChange={(e) => setPaid(Number(e.target.value))}
+                    onChange={(e) => setPaid(normalizeNumericInput(e.target.value))}
+                    placeholder="Ej. 20"
                   />
                 </div>
                 <div>
@@ -732,25 +949,25 @@ export default function CotizacionPRO() {
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
                 <button onClick={downloadPDF} style={btnPrimary()}>
-                  ⬇️ PDF
+                  Descargar PDF
                 </button>
                 <button onClick={whatsappShare} style={btnPrimary()}>
-                  🟢 WhatsApp
+                  Compartir por WhatsApp
                 </button>
 
                 <button onClick={() => saveQuote(false)} style={btn()}>
-                  💾 Guardar
+                  Guardar
                 </button>
                 <button onClick={() => saveQuote(true)} style={btn()}>
-                  ☁️ Guardar + Subir PDF
+                  Guardar y subir PDF
                 </button>
 
                 <button onClick={convertToInvoice} style={btn()}>
-                  🧾 Convertir a Factura
+                  Convertir a factura
                 </button>
 
                 <button onClick={emailSend} style={btnPrimary()}>
-                  ✉️ Enviar Email
+                  Enviar email
                 </button>
               </div>
             </div>
@@ -758,8 +975,8 @@ export default function CotizacionPRO() {
 
           <div style={{ ...card(), marginTop: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontWeight: 900 }}>📦 Detalle</div>
-              <button onClick={() => setItems((p) => [...p, { qty: 1, description: "", unit: 0, incl_vat: true }])} style={btn()}>
+              <div style={{ fontWeight: 900 }}>Detalle</div>
+              <button onClick={() => setItems((p) => [...p, { qty: "1", description: "", unit: "", incl_vat: true }])} style={btn()}>
                 + Agregar línea
               </button>
             </div>
@@ -784,11 +1001,10 @@ export default function CotizacionPRO() {
                       <Td>
                         <input
                           style={input({ width: 80 })}
-                          type="number"
-                          min={0}
-                          step="1"
+                          inputMode="numeric"
                           value={items[idx].qty}
-                          onChange={(e) => updateItem(idx, { qty: Number(e.target.value) })}
+                          onChange={(e) => updateItem(idx, { qty: normalizeNumericInput(e.target.value) })}
+                          placeholder="1"
                         />
                       </Td>
 
@@ -797,6 +1013,7 @@ export default function CotizacionPRO() {
                           style={input()}
                           value={items[idx].description}
                           onChange={(e) => updateItem(idx, { description: e.target.value })}
+                          placeholder="Ej. Caja de guantes de nitrilo"
                         />
                       </Td>
 
@@ -805,11 +1022,10 @@ export default function CotizacionPRO() {
                           <span style={{ color: "#9aa0a6" }}>$</span>
                           <input
                             style={input({ width: 140 })}
-                            type="number"
-                            min={0}
-                            step="0.01"
+                            inputMode="decimal"
                             value={items[idx].unit}
-                            onChange={(e) => updateItem(idx, { unit: Number(e.target.value) })}
+                            onChange={(e) => updateItem(idx, { unit: normalizeNumericInput(e.target.value) })}
+                            placeholder="Ej. 12,50"
                           />
                         </div>
                       </Td>
@@ -847,11 +1063,11 @@ export default function CotizacionPRO() {
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
             <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>📝 Notas</div>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>Notas</div>
               <textarea style={textarea()} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
             <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>📌 Términos y condiciones</div>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>Terminos y condiciones</div>
               <textarea style={textarea()} value={terms} onChange={(e) => setTerms(e.target.value)} />
             </div>
           </div>
@@ -863,19 +1079,25 @@ export default function CotizacionPRO() {
 
 /* ✅ UI helpers */
 function card(): React.CSSProperties {
-  return { border: "1px solid #1f2a44", background: "#0a0f1d", borderRadius: 16, padding: 14 };
+  return {
+    border: "1px solid rgba(148, 163, 184, 0.14)",
+    background: "linear-gradient(180deg, rgba(17, 24, 39, 0.96) 0%, rgba(10, 15, 26, 0.96) 100%)",
+    borderRadius: 22,
+    padding: 18,
+    boxShadow: "0 18px 36px rgba(0,0,0,0.14)",
+  };
 }
 function label(): React.CSSProperties {
-  return { display: "block", fontSize: 12, color: "#9aa0a6", marginBottom: 6 };
+  return { display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 6, fontWeight: 700 };
 }
 function input(extra: React.CSSProperties = {}): React.CSSProperties {
   return {
     width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #1f2a44",
-    background: "#0b1220",
-    color: "white",
+    padding: "12px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(148, 163, 184, 0.16)",
+    background: "rgba(8, 14, 24, 0.95)",
+    color: "#f8fafc",
     outline: "none",
     ...extra,
   };
@@ -884,10 +1106,10 @@ function textarea(): React.CSSProperties {
   return {
     width: "100%",
     minHeight: 140,
-    background: "#0b1220",
-    border: "1px solid #1f2a44",
-    color: "white",
-    borderRadius: 14,
+    background: "rgba(8, 14, 24, 0.95)",
+    border: "1px solid rgba(148, 163, 184, 0.16)",
+    color: "#f8fafc",
+    borderRadius: 16,
     padding: 12,
     outline: "none",
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -896,23 +1118,23 @@ function textarea(): React.CSSProperties {
 }
 function btn(): React.CSSProperties {
   return {
-    padding: "10px 12px",
+    padding: "11px 14px",
     borderRadius: 14,
-    border: "1px solid #2a3557",
-    background: "#111827",
-    color: "white",
-    fontWeight: 900,
+    border: "1px solid rgba(148, 163, 184, 0.16)",
+    background: "rgba(15, 23, 37, 0.96)",
+    color: "#e2e8f0",
+    fontWeight: 700,
     cursor: "pointer",
   };
 }
 function btnPrimary(): React.CSSProperties {
   return {
-    padding: "10px 12px",
+    padding: "11px 14px",
     borderRadius: 14,
-    border: "1px solid #2a3557",
-    background: "#0b4bff",
-    color: "white",
-    fontWeight: 900,
+    border: "1px solid rgba(96, 165, 250, 0.24)",
+    background: "linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%)",
+    color: "#f8fafc",
+    fontWeight: 700,
     cursor: "pointer",
   };
 }
@@ -920,10 +1142,10 @@ function dangerBtn(): React.CSSProperties {
   return {
     padding: "8px 10px",
     borderRadius: 12,
-    border: "1px solid #3a1d1d",
-    background: "#1a0b0b",
-    color: "#ffb4b4",
-    fontWeight: 900,
+    border: "1px solid rgba(248, 113, 113, 0.24)",
+    background: "rgba(69, 10, 10, 0.84)",
+    color: "#fecaca",
+    fontWeight: 700,
     cursor: "pointer",
   };
 }
@@ -931,10 +1153,12 @@ function tabBtn(active: boolean): React.CSSProperties {
   return {
     padding: "8px 12px",
     borderRadius: 14,
-    border: "1px solid #2a3557",
-    background: active ? "#0b4bff" : "#111827",
-    color: "white",
-    fontWeight: 900,
+    border: "1px solid rgba(148, 163, 184, 0.16)",
+    background: active
+      ? "linear-gradient(135deg, rgba(96,165,250,0.28), rgba(59,130,246,0.18))"
+      : "rgba(15, 23, 37, 0.96)",
+    color: "#f8fafc",
+    fontWeight: 700,
     cursor: "pointer",
   };
 }
@@ -952,8 +1176,8 @@ function Th(props: THProps) {
         textAlign: "left",
         padding: 10,
         fontSize: 12,
-        color: "#cbd5e1",
-        borderBottom: "1px solid #1f2a44",
+        color: "#94a3b8",
+        borderBottom: "1px solid rgba(148, 163, 184, 0.12)",
         ...(style || {}),
       }}
     >
@@ -973,9 +1197,31 @@ function Td(props: TDProps) {
 
 function Mini({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
   return (
-    <div style={{ border: "1px solid #1f2a44", background: "#0b1220", borderRadius: 14, padding: 10 }}>
-      <div style={{ fontSize: 12, color: "#9aa0a6" }}>{k}</div>
+    <div style={{ border: "1px solid rgba(148, 163, 184, 0.12)", background: "rgba(8, 14, 24, 0.95)", borderRadius: 16, padding: 12 }}>
+      <div style={{ fontSize: 12, color: "#94a3b8" }}>{k}</div>
       <div style={{ fontSize: bold ? 16 : 14, fontWeight: bold ? 900 : 800, marginTop: 2 }}>{v}</div>
     </div>
   );
 }
+
+function fillCustomer(customer: Customer, setters: {
+  setClientName: (v: string) => void;
+  setClientId: (v: string) => void;
+  setClientPhone: (v: string) => void;
+  setClientEmail: (v: string) => void;
+  setClientAddress: (v: string) => void;
+  setCustomerQuery: (v: string) => void;
+  setCustomerResults: (v: Customer[]) => void;
+  setSelectedCustomer: (v: Customer | null) => void;
+}) {
+  setters.setClientName(customer.display_name || customer.legal_name || "");
+  setters.setClientId(customer.document_number || "");
+  setters.setClientPhone(customer.phone || "");
+  setters.setClientEmail(customer.email || "");
+  setters.setClientAddress(customer.address || "");
+  setters.setCustomerQuery(customer.display_name || customer.legal_name || "");
+  setters.setCustomerResults([]);
+  setters.setSelectedCustomer(customer);
+}
+
+const applyCustomer = fillCustomer;

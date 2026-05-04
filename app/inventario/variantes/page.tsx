@@ -101,7 +101,7 @@ export default function VariantesPage() {
 
   useEffect(() => {
     loadVariants(productId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [productId]);
 
   function makeVariantName() {

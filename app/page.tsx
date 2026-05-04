@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import jsPDF from "jspdf";
 import { supabase } from "./lib/supabase";
@@ -18,21 +19,18 @@ function InventoryDrawer() {
 
   return (
     <>
-      {/* Botón ☰ fijo arriba-izquierda */}
       <button
         type="button"
         onClick={() => setOpen(true)}
         style={drawerFab}
-        aria-label="Abrir menú"
-        title="Menú"
+        aria-label="Abrir menu"
+        title="Menu"
       >
-        ☰
+        Menu
       </button>
 
-      {/* Fondo oscuro al abrir */}
       {open && <div style={drawerBackdrop} onClick={() => setOpen(false)} />}
 
-      {/* Drawer */}
       <aside
         style={{
           ...drawerPanel,
@@ -42,7 +40,7 @@ function InventoryDrawer() {
         <div style={drawerHeader}>
           <div>
             <div style={drawerBrandTitle}>HST</div>
-            <div style={drawerBrandSub}>Menú rápido</div>
+            <div style={drawerBrandSub}>Menu rapido</div>
           </div>
 
           <button
@@ -52,48 +50,30 @@ function InventoryDrawer() {
             aria-label="Cerrar"
             title="Cerrar"
           >
-            ✕
+            X
           </button>
         </div>
 
         <div style={drawerSection}>CONTABILIDAD</div>
-<nav style={{ display: "grid", gap: 8 }}>
-
-  <a style={drawerItem} href="/" onClick={() => setOpen(false)}>
-    📊 Panel Contabilidad
-  </a>
-
-  <a style={drawerItem} href="/cotizacion" onClick={() => setOpen(false)}>
-    📄 Cotizaciones
-  </a>
-
-</nav>
+        <nav style={{ display: "grid", gap: 8 }}>
+          <Link style={drawerItem} href="/" onClick={() => setOpen(false)}>
+            Panel contabilidad
+          </Link>
+          <Link style={drawerItem} href="/clientes" onClick={() => setOpen(false)}>
+            Clientes
+          </Link>
+          <Link style={drawerItem} href="/cotizacion" onClick={() => setOpen(false)}>
+            Cotizaciones
+          </Link>
+        </nav>
 
         <div style={drawerDivider} />
 
         <div style={drawerSection}>INVENTARIO</div>
         <nav style={{ display: "grid", gap: 8 }}>
-          <a style={drawerItem} href="/inventario" onClick={() => setOpen(false)}>
-            🏠 Inicio Inventario
-          </a>
-          <a style={drawerItem} href="/inventario/productos" onClick={() => setOpen(false)}>
-            📦 Productos
-          </a>
-          <a style={drawerItem} href="/inventario/compras" onClick={() => setOpen(false)}>
-            🛒 Compras
-          </a>
-          <a style={drawerItem} href="/inventario/calculadora" onClick={() => setOpen(false)}>
-            🧮 Calculadora PVP
-          </a>
-          <a style={drawerItem} href="/inventario/stock" onClick={() => setOpen(false)}>
-            📦 Inventario (Stock)
-          </a>
-          <a style={drawerItem} href="/inventario/venta" onClick={() => setOpen(false)}>
-            💰 Venta (POS)
-          </a>
-          <a style={drawerItem} href="/inventario/reportes" onClick={() => setOpen(false)}>
-            📊 Reportes
-          </a>
+          <Link style={drawerItem} href="/inventario" onClick={() => setOpen(false)}>
+            Abrir modulo de inventario
+          </Link>
         </nav>
 
         <div style={drawerFooter}>
@@ -109,16 +89,18 @@ const drawerFab: React.CSSProperties = {
   left: 14,
   top: 14,
   zIndex: 9999,
-  width: 44,
-  height: 44,
-  borderRadius: 12,
-  border: "1px solid #6b5a1b",
-  background: "#d4af37",
-  color: "#000",
-  fontWeight: 900,
-  fontSize: 22,
+  minWidth: 82,
+  height: 42,
+  padding: "0 14px",
+  borderRadius: 999,
+  border: "1px solid rgba(137, 160, 185, 0.22)",
+  background: "rgba(10, 18, 31, 0.9)",
+  color: "#eef4fb",
+  fontWeight: 700,
+  fontSize: 14,
   cursor: "pointer",
-  boxShadow: "0 10px 25px rgba(0,0,0,0.55)",
+  boxShadow: "0 14px 28px rgba(0,0,0,0.2)",
+  backdropFilter: "blur(16px)",
 };
 
 const drawerBackdrop: React.CSSProperties = {
@@ -134,10 +116,10 @@ const drawerPanel: React.CSSProperties = {
   left: 0,
   height: "100vh",
   width: 320,
-  background: "#0b0b0b",
-  borderRight: "1px solid #222",
+  background: "linear-gradient(180deg, rgba(8, 14, 24, 0.98) 0%, rgba(11, 18, 32, 0.98) 100%)",
+  borderRight: "1px solid rgba(137, 160, 185, 0.12)",
   zIndex: 9999,
-  padding: 14,
+  padding: 18,
   transition: "transform 180ms ease-out",
   overflowY: "auto",
 };
@@ -151,14 +133,14 @@ const drawerHeader: React.CSSProperties = {
 };
 
 const drawerBrandTitle: React.CSSProperties = {
-  color: "#d4af37",
+  color: "#f4f7fb",
   fontWeight: 900,
-  fontSize: 18,
+  fontSize: 20,
   letterSpacing: 1,
 };
 
 const drawerBrandSub: React.CSSProperties = {
-  color: "#aaa",
+  color: "#8ea1bb",
   fontSize: 12,
   marginTop: 2,
 };
@@ -166,16 +148,16 @@ const drawerBrandSub: React.CSSProperties = {
 const drawerClose: React.CSSProperties = {
   width: 36,
   height: 36,
-  borderRadius: 10,
-  border: "1px solid #333",
-  background: "#111",
-  color: "#fff",
+  borderRadius: 12,
+  border: "1px solid rgba(137, 160, 185, 0.14)",
+  background: "rgba(15, 24, 39, 0.86)",
+  color: "#eef4fb",
   cursor: "pointer",
   fontWeight: 900,
 };
 
 const drawerSection: React.CSSProperties = {
-  color: "#777",
+  color: "#7f93ab",
   fontSize: 11,
   fontWeight: 900,
   marginTop: 8,
@@ -185,18 +167,18 @@ const drawerSection: React.CSSProperties = {
 
 const drawerItem: React.CSSProperties = {
   display: "block",
-  padding: "10px 12px",
-  borderRadius: 12,
-  background: "#111",
-  border: "1px solid #222",
-  color: "#fff",
+  padding: "12px 14px",
+  borderRadius: 16,
+  background: "rgba(14, 25, 40, 0.76)",
+  border: "1px solid rgba(137, 160, 185, 0.12)",
+  color: "#eef4fb",
   textDecoration: "none",
-  fontWeight: 800,
+  fontWeight: 700,
 };
 
 const drawerDivider: React.CSSProperties = {
   height: 1,
-  background: "#222",
+  background: "rgba(137, 160, 185, 0.12)",
   margin: "12px 0",
 };
 
@@ -951,18 +933,24 @@ export default function Home() {
   return (
     <main
       style={{
-        backgroundColor: "#0b0b0b",
-        color: "#d4af37",
+        background:
+          "radial-gradient(circle at top left, rgba(86, 149, 255, 0.12), transparent 24%), linear-gradient(180deg, #0b1220 0%, #0e1728 100%)",
+        color: "#e8eef8",
         minHeight: "100vh",
-        padding: "40px",
-        fontFamily: "Arial",
+        padding: "32px",
+        fontFamily: "var(--font-geist-sans), sans-serif",
       }}
     >
       <InventoryDrawer />
 
-      <h1 style={{ fontSize: "48px" }}>HST CONTABILIDAD</h1>
-      <p style={{ color: "#aaa" }}>Panel financiero Julian Silva</p>
-      <p style={{ color: "#00ff88" }}>{status}</p>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ color: "#8ea1bb", textTransform: "uppercase", letterSpacing: 1.8, fontSize: 12, fontWeight: 700 }}>
+          Mi negocio
+        </div>
+        <h1 style={{ fontSize: "46px", margin: "8px 0 6px", color: "#f7fbff" }}>HST Contabilidad</h1>
+        <p style={{ color: "#8ea1bb", margin: 0 }}>Centro operativo para caja, facturas y control del negocio.</p>
+        <p style={{ color: "#7ee0c3", marginTop: 10, fontWeight: 600 }}>{status}</p>
+      </div>
 
       <div
         style={{
@@ -972,10 +960,10 @@ export default function Home() {
           marginTop: "20px",
         }}
       >
-        <Card title="💰 Saldo total" value={`$${saldo.toFixed(2)}`} />
-        <Card title="📈 Ingresos" value={`$${ingresos.toFixed(2)}`} />
-        <Card title="📉 Gastos" value={`$${gastos.toFixed(2)}`} />
-        <Card title="🧾 Por cobrar" value={`$${porCobrar.toFixed(2)}`} />
+        <Card title="Saldo total" value={`$${saldo.toFixed(2)}`} />
+        <Card title="Ingresos" value={`$${ingresos.toFixed(2)}`} />
+        <Card title="Gastos" value={`$${gastos.toFixed(2)}`} />
+        <Card title="Por cobrar" value={`$${porCobrar.toFixed(2)}`} />
       </div>
 
       <div
@@ -1026,10 +1014,10 @@ export default function Home() {
           />
 
           <button onClick={guardarMovimiento} style={btnGold}>
-            GUARDAR MOVIMIENTO
+            Guardar movimiento
           </button>
           <button onClick={cargarDatos} style={btnGhost}>
-            🔄 Actualizar panel
+            Actualizar panel
           </button>
         </section>
 
@@ -1195,7 +1183,7 @@ export default function Home() {
 
       {/* HISTORIAL */}
       <section style={{ ...panel, marginTop: 30 }}>
-        <h2 style={{ marginTop: 0 }}>📜 Historial General</h2>
+        <h2 style={{ marginTop: 0 }}>Historial general</h2>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
           <div style={{ flex: "1 1 180px" }}>
@@ -1210,7 +1198,7 @@ export default function Home() {
 
           <div style={{ flex: "1 1 260px", display: "flex", alignItems: "end" }}>
             <button style={btnGold} onClick={generarEstadoCuentaPDF}>
-              🧾 Descargar PDF (Estado de Cuenta)
+              Descargar PDF del estado de cuenta
             </button>
           </div>
         </div>
@@ -1403,70 +1391,71 @@ export default function Home() {
 
 function Card({ title, value }: { title: string; value: string }) {
   return (
-    <div style={{ background: "#111", padding: "18px", borderRadius: "12px", border: "1px solid #333" }}>
-      <div style={{ color: "#aaa", marginBottom: 8 }}>{title}</div>
-      <div style={{ fontSize: 28, color: "#d4af37", fontWeight: 700 }}>{value}</div>
+    <div style={{ background: "linear-gradient(180deg, rgba(17,27,42,0.96) 0%, rgba(10,18,31,0.96) 100%)", padding: "20px", borderRadius: "20px", border: "1px solid rgba(137, 160, 185, 0.12)", boxShadow: "0 18px 36px rgba(0,0,0,0.16)" }}>
+      <div style={{ color: "#8ea1bb", marginBottom: 8, fontSize: 13, fontWeight: 600 }}>{title}</div>
+      <div style={{ fontSize: 30, color: "#f7fbff", fontWeight: 800 }}>{value}</div>
     </div>
   );
 }
 
 const panel: CSSProperties = {
-  background: "#111",
-  padding: "20px",
-  borderRadius: "12px",
-  border: "1px solid #333",
+  background: "linear-gradient(180deg, rgba(17,27,42,0.96) 0%, rgba(10,18,31,0.96) 100%)",
+  padding: "22px",
+  borderRadius: "22px",
+  border: "1px solid rgba(137, 160, 185, 0.12)",
+  boxShadow: "0 18px 36px rgba(0,0,0,0.16)",
 };
 
 const input: CSSProperties = {
   width: "100%",
-  padding: "12px",
+  padding: "13px 14px",
   marginBottom: "10px",
-  borderRadius: "10px",
-  border: "1px solid #2a2a2a",
-  background: "#0f0f0f",
-  color: "#fff",
+  borderRadius: "14px",
+  border: "1px solid rgba(137, 160, 185, 0.14)",
+  background: "rgba(7, 14, 24, 0.94)",
+  color: "#eef4fb",
   outline: "none",
 };
 
 const btnGold: CSSProperties = {
   width: "100%",
   padding: "14px",
-  background: "#d4af37",
-  color: "#000",
-  border: "none",
-  borderRadius: "10px",
-  fontWeight: "bold",
-  fontSize: "16px",
+  background: "linear-gradient(135deg, #70b6ff 0%, #4a89d8 100%)",
+  color: "#f7fbff",
+  border: "1px solid rgba(112, 182, 255, 0.24)",
+  borderRadius: "14px",
+  fontWeight: 700,
+  fontSize: "15px",
   cursor: "pointer",
 };
 
 const btnGhost: CSSProperties = {
   padding: "10px 12px",
-  background: "transparent",
-  color: "#d4af37",
-  border: "1px solid #d4af37",
-  borderRadius: "10px",
-  fontWeight: "bold",
+  background: "rgba(12, 24, 39, 0.88)",
+  color: "#d7e6f6",
+  border: "1px solid rgba(137, 160, 185, 0.16)",
+  borderRadius: "14px",
+  fontWeight: 700,
   cursor: "pointer",
 };
 
 const btnMini: CSSProperties = {
   padding: "8px 12px",
-  background: "#d4af37",
-  color: "#000",
-  border: "none",
-  borderRadius: "10px",
-  fontWeight: "bold",
+  background: "linear-gradient(135deg, #70b6ff 0%, #4a89d8 100%)",
+  color: "#f7fbff",
+  border: "1px solid rgba(112, 182, 255, 0.24)",
+  borderRadius: "12px",
+  fontWeight: 700,
   cursor: "pointer",
 };
 
 const btnMiniGhost: CSSProperties = {
   padding: "8px 12px",
-  background: "transparent",
-  color: "#d4af37",
-  border: "1px solid #d4af37",
-  borderRadius: "10px",
-  fontWeight: "bold",
+  background: "rgba(12, 24, 39, 0.88)",
+  color: "#d7e6f6",
+  border: "1px solid rgba(137, 160, 185, 0.16)",
+  borderRadius: "12px",
+  fontWeight: 700,
   cursor: "pointer",
   marginLeft: 8,
 };
@@ -1475,25 +1464,25 @@ const th: CSSProperties = {
   textAlign: "left",
   padding: "10px",
   fontSize: 13,
-  color: "#d4af37",
-  borderBottom: "1px solid #2a2a2a",
+  color: "#8ea1bb",
+  borderBottom: "1px solid rgba(137, 160, 185, 0.12)",
   whiteSpace: "nowrap",
 };
 
 const td: CSSProperties = {
   padding: "10px",
   fontSize: 13,
-  color: "#eee",
+  color: "#e8eef8",
   verticalAlign: "top",
 };
 
 const hintBox: CSSProperties = {
-  border: "1px solid #2a2a2a",
-  borderRadius: 10,
+  border: "1px solid rgba(137, 160, 185, 0.12)",
+  borderRadius: 14,
   padding: 12,
   marginBottom: 10,
-  background: "#0f0f0f",
-  color: "#aaa",
+  background: "rgba(6, 13, 23, 0.9)",
+  color: "#8ea1bb",
 };
 
 const hintRow: CSSProperties = {
