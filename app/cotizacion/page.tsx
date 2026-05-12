@@ -53,6 +53,14 @@ function integerValue(value: string | number | null | undefined, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function inferDocumentType(value: string) {
+  const clean = value.replace(/\D/g, "");
+  if (clean.length === 13) return "RUC";
+  if (clean.length === 10) return "CEDULA";
+  if (clean.length > 0) return "PASAPORTE";
+  return null;
+}
+
 function genQuoteNo() {
   const d = new Date();
   const y = d.getFullYear();
@@ -95,6 +103,8 @@ export default function CotizacionPRO() {
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [saveCustomerEnabled, setSaveCustomerEnabled] = useState(true);
+  const [customerSyncStatus, setCustomerSyncStatus] = useState("");
   const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [customerTableReady, setCustomerTableReady] = useState(true);
 
@@ -414,6 +424,121 @@ export default function CotizacionPRO() {
     return data.publicUrl || null;
   };
 
+  const saveCustomerFromQuote = async (manual = false) => {
+    const displayName = clientName.trim();
+    if (!displayName) {
+      if (manual) setCustomerSyncStatus("Escribe al menos el nombre del cliente.");
+      return;
+    }
+
+    try {
+      const sb = supabaseBrowser();
+      const documentNumber = clientId.trim();
+      const email = clientEmail.trim().toLowerCase();
+      const phone = clientPhone.trim();
+      const payload = {
+        document_type: documentNumber ? inferDocumentType(documentNumber) : null,
+        document_number: documentNumber || null,
+        display_name: displayName,
+        legal_name: displayName,
+        email: email || null,
+        phone: phone || null,
+        address: clientAddress.trim() || null,
+        active: true,
+      };
+
+      const syncSelected = async (id: string) => {
+        const customer: Customer = {
+          id,
+          document_type: payload.document_type,
+          document_number: payload.document_number,
+          display_name: payload.display_name,
+          legal_name: payload.legal_name,
+          email: payload.email,
+          phone: payload.phone,
+          address: payload.address,
+        };
+        setSelectedCustomer(customer);
+        setCustomerQuery(customer.display_name || customer.legal_name || "");
+        setCustomerSyncStatus(manual ? "Cliente guardado y listo para futuras cotizaciones." : "Cliente actualizado automaticamente.");
+      };
+
+      if (selectedCustomer?.id) {
+        const { error } = await sb.from("customers").update(payload).eq("id", selectedCustomer.id);
+        if (!error) {
+          await syncSelected(selectedCustomer.id);
+          return;
+        }
+      }
+
+      if (documentNumber) {
+        const { data: byDocument } = await sb
+          .from("customers")
+          .select("id")
+          .eq("document_number", documentNumber)
+          .limit(1)
+          .maybeSingle();
+
+        if (byDocument?.id) {
+          await sb.from("customers").update(payload).eq("id", byDocument.id);
+          await syncSelected(byDocument.id);
+          return;
+        }
+      }
+
+      if (email) {
+        const { data: byEmail } = await sb
+          .from("customers")
+          .select("id")
+          .eq("email", email)
+          .limit(1)
+          .maybeSingle();
+
+        if (byEmail?.id) {
+          await sb.from("customers").update(payload).eq("id", byEmail.id);
+          await syncSelected(byEmail.id);
+          return;
+        }
+      }
+
+      if (phone) {
+        const { data: byPhone } = await sb
+          .from("customers")
+          .select("id")
+          .eq("phone", phone)
+          .limit(1)
+          .maybeSingle();
+
+        if (byPhone?.id) {
+          await sb.from("customers").update(payload).eq("id", byPhone.id);
+          await syncSelected(byPhone.id);
+          return;
+        }
+      }
+
+      const { data: byName } = await sb
+        .from("customers")
+        .select("id")
+        .eq("display_name", displayName)
+        .limit(1)
+        .maybeSingle();
+
+      if (byName?.id) {
+        await sb.from("customers").update(payload).eq("id", byName.id);
+        await syncSelected(byName.id);
+        return;
+      }
+
+      const { data: created } = await sb.from("customers").insert(payload).select("id").single();
+      if (created?.id) {
+        await syncSelected(created.id);
+      }
+    } catch {
+      // No frenamos el guardado de la cotizacion si guardar el cliente falla.
+      if (manual) setCustomerSyncStatus("No pude guardar el cliente en este momento.");
+    }
+  };
+
   const saveQuote = async (alsoUploadPdf: boolean) => {
     let pdf_url: string | null = null;
     if (alsoUploadPdf) pdf_url = await uploadPDFandGetUrl();
@@ -455,6 +580,11 @@ export default function CotizacionPRO() {
 
     const id = json?.data?.quote?.id ?? null;
     setQuoteId(id);
+    if (saveCustomerEnabled) {
+      await saveCustomerFromQuote();
+    } else {
+      setCustomerSyncStatus("Cotizacion guardada sin actualizar la base de clientes.");
+    }
 
     alert(alsoUploadPdf ? "✅ Guardado + PDF subido (link listo para compartir)." : "✅ Cotización guardada.");
   };
@@ -920,6 +1050,53 @@ export default function CotizacionPRO() {
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={label()}>Dirección</label>
                   <input style={input()} value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 12,
+                  borderRadius: 14,
+                  border: "1px solid rgba(148, 163, 184, 0.14)",
+                  background: "rgba(8, 14, 24, 0.78)",
+                  display: "grid",
+                  gap: 10,
+                }}
+              >
+                <label style={{ display: "flex", alignItems: "center", gap: 10, color: "#dbeafe", fontSize: 13, fontWeight: 700 }}>
+                  <input
+                    type="checkbox"
+                    checked={saveCustomerEnabled}
+                    onChange={(e) => setSaveCustomerEnabled(e.target.checked)}
+                  />
+                  Guardar este cliente para futuras cotizaciones
+                </label>
+
+                <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6 }}>
+                  {selectedCustomer
+                    ? "Si cambias telefono, correo o direccion, puedes actualizar este cliente desde aqui."
+                    : "Si el cliente no existe, se creara automaticamente al guardar la cotizacion."}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={btn()} onClick={() => saveCustomerFromQuote(true)}>
+                    {selectedCustomer ? "Actualizar cliente guardado" : "Guardar cliente ahora"}
+                  </button>
+                  {customerSyncStatus ? (
+                    <div
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        background: "rgba(59, 130, 246, 0.1)",
+                        border: "1px solid rgba(96, 165, 250, 0.18)",
+                        color: "#bfdbfe",
+                        fontSize: 12,
+                      }}
+                    >
+                      {customerSyncStatus}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
