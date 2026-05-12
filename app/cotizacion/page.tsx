@@ -606,11 +606,11 @@ export default function CotizacionPRO() {
   }, [list, search]);
 
   return (
-    <div style={{ padding: 18, maxWidth: 1200, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+    <div style={{ padding: 18, maxWidth: 1200, margin: "0 auto" }} className="mobile-quotes-page">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }} className="mobile-quotes-hero">
         <h1 style={{ fontSize: 38, margin: 0, color: "#f8fafc" }}>Cotizaciones</h1>
 
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8 }} className="mobile-quotes-tabs">
           <button onClick={() => setTab("nueva")} style={tabBtn(tab === "nueva")}>
             Nueva
           </button>
@@ -632,14 +632,14 @@ export default function CotizacionPRO() {
 
       {tab === "historial" ? (
         <div style={{ ...card(), marginTop: 14 }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }} className="mobile-quotes-toolbar">
             <div style={{ fontWeight: 900 }}>Historial de cotizaciones</div>
             <button onClick={loadList} style={btn()}>
               ↻ Actualizar
             </button>
           </div>
 
-          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }} className="mobile-quotes-searchbar">
             <input
               style={input()}
               placeholder="Buscar por N° o cliente..."
@@ -649,7 +649,7 @@ export default function CotizacionPRO() {
           </div>
 
           <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }} className="mobile-quotes-desktop-table">
               <thead>
                 <tr style={{ background: "#0b1220" }}>
                   <Th>N°</Th>
@@ -701,15 +701,46 @@ export default function CotizacionPRO() {
                 )}
               </tbody>
             </table>
+
+            <div className="mobile-quotes-mobile-list" style={{ display: "none", marginTop: 10 }}>
+              {loadingList ? (
+                <div style={{ color: "#9aa0a6" }}>Cargando...</div>
+              ) : filtered.length === 0 ? (
+                <div style={{ color: "#9aa0a6" }}>Sin resultados.</div>
+              ) : (
+                filtered.map((q) => (
+                  <div key={q.id} style={mobileCard()}>
+                    <div style={mobileCardTitleRow}>
+                      <div style={mobileCardTitle}>{q.client_name || "-"}</div>
+                      <div style={mobileCardBadge}>{q.quote_no}</div>
+                    </div>
+                    <div style={mobileCardMeta}>{String(q.date || "")}</div>
+                    <div style={mobileCardActions}>
+                      {q.pdf_url ? (
+                        <a href={q.pdf_url} target="_blank" rel="noreferrer" style={mobileLinkBtn()}>
+                          Abrir PDF
+                        </a>
+                      ) : null}
+                      <button onClick={() => openQuote(q.id)} style={btn()}>
+                        Abrir
+                      </button>
+                      <button onClick={() => deleteQuote(q.id)} style={dangerBtn()}>
+                        Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr", gap: 10, marginTop: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr", gap: 10, marginTop: 14 }} className="mobile-quotes-top-grid">
             <div style={card()}>
               <label style={label()}>N° Cotización</label>
               <input style={input()} value={quoteNo} onChange={(e) => setQuoteNo(e.target.value)} />
-              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }} className="mobile-quotes-buttons">
                 <button
                   onClick={() => {
                     setQuoteId(null);
@@ -754,7 +785,7 @@ export default function CotizacionPRO() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10, marginTop: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10, marginTop: 12 }} className="mobile-quotes-main-grid">
             <div style={card()}>
               <div style={{ fontWeight: 900, marginBottom: 10 }}>Datos del cliente</div>
               <div style={{ marginBottom: 12 }}>
@@ -853,7 +884,7 @@ export default function CotizacionPRO() {
                   </div>
                 ) : null}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }} className="mobile-quotes-form-grid">
                 <div>
                   <label style={label()}>Nombre</label>
                   <input
@@ -896,7 +927,7 @@ export default function CotizacionPRO() {
             <div style={card()}>
               <div style={{ fontWeight: 900, marginBottom: 10 }}>Acciones</div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }} className="mobile-quotes-form-grid">
                 <div>
                   <label style={label()}>Descuento ($)</label>
                   <input
@@ -947,7 +978,7 @@ export default function CotizacionPRO() {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }} className="mobile-quotes-action-grid">
                 <button onClick={downloadPDF} style={btnPrimary()}>
                   Descargar PDF
                 </button>
@@ -974,7 +1005,7 @@ export default function CotizacionPRO() {
           </div>
 
           <div style={{ ...card(), marginTop: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }} className="mobile-quotes-toolbar">
               <div style={{ fontWeight: 900 }}>Detalle</div>
               <button onClick={() => setItems((p) => [...p, { qty: "1", description: "", unit: "", incl_vat: true }])} style={btn()}>
                 + Agregar línea
@@ -982,7 +1013,7 @@ export default function CotizacionPRO() {
             </div>
 
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }} className="mobile-quotes-desktop-table">
                 <thead>
                   <tr style={{ background: "#0b1220" }}>
                     <Th>Cant.</Th>
@@ -1050,9 +1081,70 @@ export default function CotizacionPRO() {
                   ))}
                 </tbody>
               </table>
+
+              <div className="mobile-quotes-mobile-list" style={{ display: "none", marginTop: 10 }}>
+                {totals.lines.map((l, idx) => (
+                  <div key={idx} style={mobileCard()}>
+                    <div style={mobileCardTitleRow}>
+                      <div style={mobileCardTitle}>{items[idx].description || `Linea ${idx + 1}`}</div>
+                      <button onClick={() => removeItem(idx)} style={dangerBtn()}>
+                        Quitar
+                      </button>
+                    </div>
+
+                    <div style={mobileFormStack}>
+                      <div>
+                        <label style={label()}>Cantidad</label>
+                        <input
+                          style={input()}
+                          inputMode="numeric"
+                          value={items[idx].qty}
+                          onChange={(e) => updateItem(idx, { qty: normalizeNumericInput(e.target.value) })}
+                          placeholder="1"
+                        />
+                      </div>
+
+                      <div>
+                        <label style={label()}>Descripcion</label>
+                        <input
+                          style={input()}
+                          value={items[idx].description}
+                          onChange={(e) => updateItem(idx, { description: e.target.value })}
+                          placeholder="Ej. Caja de guantes de nitrilo"
+                        />
+                      </div>
+
+                      <div>
+                        <label style={label()}>P. unitario</label>
+                        <input
+                          style={input()}
+                          inputMode="decimal"
+                          value={items[idx].unit}
+                          onChange={(e) => updateItem(idx, { unit: normalizeNumericInput(e.target.value) })}
+                          placeholder="Ej. 12,50"
+                        />
+                      </div>
+
+                      <label style={{ ...label(), display: "flex", alignItems: "center", gap: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={items[idx].incl_vat}
+                          onChange={(e) => updateItem(idx, { incl_vat: e.target.checked })}
+                        />
+                        Aplicar IVA
+                      </label>
+                    </div>
+
+                    <div style={mobileSummaryGrid}>
+                      <Mini k="P.U. con IVA" v={`$ ${money(l.unitWithVat)}`} />
+                      <Mini k="Total" v={`$ ${money(l.total)}`} bold />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginTop: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginTop: 14 }} className="mobile-quotes-totals-grid">
               <Mini k="Total parcial" v={`$ ${money(totals.subtotal)}`} />
               <Mini k="Descuento" v={`$ ${money(totals.disc)}`} />
               <Mini k="Neto" v={`$ ${money(totals.neto)}`} />
@@ -1061,7 +1153,7 @@ export default function CotizacionPRO() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }} className="mobile-quotes-notes-grid">
             <div style={card()}>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>Notas</div>
               <textarea style={textarea()} value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -1225,3 +1317,70 @@ function fillCustomer(customer: Customer, setters: {
 }
 
 const applyCustomer = fillCustomer;
+
+function mobileCard(): React.CSSProperties {
+  return {
+    border: "1px solid rgba(148, 163, 184, 0.14)",
+    background: "rgba(8, 14, 24, 0.95)",
+    borderRadius: 18,
+    padding: 14,
+    display: "grid",
+    gap: 12,
+  };
+}
+
+function mobileLinkBtn(): React.CSSProperties {
+  return {
+    ...btn(),
+    textDecoration: "none",
+    display: "inline-flex",
+    justifyContent: "center",
+    alignItems: "center",
+  };
+}
+
+const mobileCardTitleRow: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 10,
+  alignItems: "flex-start",
+  flexWrap: "wrap",
+};
+
+const mobileCardTitle: React.CSSProperties = {
+  fontSize: 16,
+  fontWeight: 900,
+  color: "#f8fafc",
+};
+
+const mobileCardBadge: React.CSSProperties = {
+  padding: "6px 10px",
+  borderRadius: 999,
+  background: "rgba(59, 130, 246, 0.12)",
+  border: "1px solid rgba(96, 165, 250, 0.2)",
+  color: "#dbeafe",
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const mobileCardMeta: React.CSSProperties = {
+  color: "#94a3b8",
+  fontSize: 13,
+};
+
+const mobileCardActions: React.CSSProperties = {
+  display: "grid",
+  gap: 8,
+  gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))",
+};
+
+const mobileFormStack: React.CSSProperties = {
+  display: "grid",
+  gap: 10,
+};
+
+const mobileSummaryGrid: React.CSSProperties = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+};
