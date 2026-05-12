@@ -109,6 +109,47 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   return 2 * r * Math.asin(Math.sqrt(a));
 }
 
+function orderRouteByLocation(orders: DeliveryOrder[], location: { lat: number; lng: number } | null) {
+  const active = orders.filter((row) => row.status !== "ENTREGADO" && row.status !== "CANCELADO");
+  if (!location) {
+    return [...active].sort((a, b) => {
+      const byPosition = (a.route_position ?? 9999) - (b.route_position ?? 9999);
+      if (byPosition !== 0) return byPosition;
+      return a.priority.localeCompare(b.priority);
+    });
+  }
+
+  const withCoords = active.filter((row) => row.latitude != null && row.longitude != null);
+  const withoutCoords = active.filter((row) => row.latitude == null || row.longitude == null);
+  const ordered: DeliveryOrder[] = [];
+  let current = { lat: location.lat, lng: location.lng };
+  const pool = [...withCoords];
+
+  while (pool.length) {
+    let bestIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    pool.forEach((row, index) => {
+      const distance = haversineKm(current.lat, current.lng, Number(row.latitude), Number(row.longitude));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+    const [next] = pool.splice(bestIndex, 1);
+    ordered.push(next);
+    current = { lat: Number(next.latitude), lng: Number(next.longitude) };
+  }
+
+  return [...ordered, ...withoutCoords];
+}
+
+function getMapsStopValue(row: DeliveryOrder) {
+  if (row.latitude != null && row.longitude != null) {
+    return `${row.latitude},${row.longitude}`;
+  }
+  return row.address.trim();
+}
+
 export default function AgendaPedidosPage() {
   const [rows, setRows] = useState<DeliveryOrder[]>([]);
   const [status, setStatus] = useState("Cargando pedidos...");
@@ -165,37 +206,7 @@ export default function AgendaPedidosPage() {
   }, [filtered, routeDate]);
 
   const routeOrders = useMemo(() => {
-    const active = dailyOrders.filter((row) => row.status !== "ENTREGADO" && row.status !== "CANCELADO");
-    if (!geo) {
-      return [...active].sort((a, b) => {
-        const byPosition = (a.route_position ?? 9999) - (b.route_position ?? 9999);
-        if (byPosition !== 0) return byPosition;
-        return a.priority.localeCompare(b.priority);
-      });
-    }
-
-    const withCoords = active.filter((row) => row.latitude != null && row.longitude != null);
-    const withoutCoords = active.filter((row) => row.latitude == null || row.longitude == null);
-    const ordered: DeliveryOrder[] = [];
-    let current = { lat: geo.lat, lng: geo.lng };
-    const pool = [...withCoords];
-
-    while (pool.length) {
-      let bestIndex = 0;
-      let bestDistance = Number.POSITIVE_INFINITY;
-      pool.forEach((row, index) => {
-        const distance = haversineKm(current.lat, current.lng, Number(row.latitude), Number(row.longitude));
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestIndex = index;
-        }
-      });
-      const [next] = pool.splice(bestIndex, 1);
-      ordered.push(next);
-      current = { lat: Number(next.latitude), lng: Number(next.longitude) };
-    }
-
-    return [...ordered, ...withoutCoords];
+    return orderRouteByLocation(dailyOrders, geo);
   }, [dailyOrders, geo]);
 
   const deliveredToday = dailyOrders.filter((row) => row.status === "ENTREGADO").length;
@@ -419,22 +430,56 @@ export default function AgendaPedidosPage() {
     setStatus("Ruta guardada para el dia.");
   }
 
-  function openGoogleMapsRoute() {
-    const usable = routeOrders.filter((row) => row.address.trim());
-    if (usable.length === 0) return alert("No hay direcciones listas para armar la ruta.");
+  function launchGoogleMapsRoute(orderedStops: DeliveryOrder[]) {
+    const usable = orderedStops.filter((row) => row.address.trim());
+    if (usable.length === 0) {
+      alert("No hay direcciones listas para armar la ruta.");
+      return;
+    }
 
-    const origin = geo ? `${geo.lat},${geo.lng}` : usable[0].address;
-    const destination = usable.length > 1 ? usable[usable.length - 1].address : usable[0].address;
-    const waypointsBase = geo ? usable : usable.slice(1, -1);
-    const waypoints = waypointsBase.slice(0, 9).map((row) => row.address).join("|");
+    const destination = getMapsStopValue(usable[usable.length - 1]);
+    const waypoints = usable
+      .slice(0, -1)
+      .slice(0, 9)
+      .map(getMapsStopValue)
+      .filter(Boolean)
+      .join("|");
 
     const url = new URL("https://www.google.com/maps/dir/");
     url.searchParams.set("api", "1");
-    url.searchParams.set("origin", origin);
     url.searchParams.set("destination", destination);
     if (waypoints) url.searchParams.set("waypoints", waypoints);
     url.searchParams.set("travelmode", "driving");
+    url.searchParams.set("dir_action", "navigate");
     window.open(url.toString(), "_blank");
+  }
+
+  function openGoogleMapsRoute() {
+    const startRoute = (location: { lat: number; lng: number } | null) => {
+      const orderedStops = orderRouteByLocation(dailyOrders, location);
+      if (location) {
+        setGeo(location);
+        setStatus("Ruta abierta desde tu ubicacion actual.");
+      } else {
+        setStatus("Ruta abierta. Si activas tu ubicacion, el orden mejora todavia mas.");
+      }
+      launchGoogleMapsRoute(orderedStops);
+    };
+
+    if (!navigator.geolocation) {
+      startRoute(geo);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        startRoute({ lat: position.coords.latitude, lng: position.coords.longitude });
+      },
+      () => {
+        startRoute(geo);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
   }
 
   return (
