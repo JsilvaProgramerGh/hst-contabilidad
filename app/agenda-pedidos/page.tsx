@@ -168,10 +168,13 @@ function orderRouteByLocation(orders: DeliveryOrder[], location: { lat: number; 
 }
 
 function getMapsStopValue(row: DeliveryOrder) {
+  if (row.address.trim()) {
+    return row.address.trim();
+  }
   if (row.latitude != null && row.longitude != null) {
     return `${row.latitude},${row.longitude}`;
   }
-  return row.address.trim();
+  return "";
 }
 
 export default function AgendaPedidosPage() {
@@ -469,27 +472,21 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
   if (usable.length === 0) {
     alert("No hay direcciones listas para armar la ruta.");
     if (targetWindow && !targetWindow.closed) targetWindow.close();
-      return;
-    }
+    return;
+  }
 
-  const mobile = isMobileDevice();
-  const mobileStops = mobile ? usable.slice(0, 1) : usable;
-  const destination = getMapsStopValue(mobileStops[mobileStops.length - 1]);
-  const waypoints = mobile
-    ? ""
-    : mobileStops
-        .slice(0, -1)
-        .slice(0, 9)
-        .map(getMapsStopValue)
-        .filter(Boolean)
-        .join("|");
+  const destination = getMapsStopValue(usable[usable.length - 1]);
+  const waypoints = usable
+    .slice(0, -1)
+    .slice(0, 9)
+    .map(getMapsStopValue)
+    .filter(Boolean)
+    .join("|");
 
-    const url = new URL("https://www.google.com/maps/dir/");
-    url.searchParams.set("api", "1");
-    url.searchParams.set("destination", destination);
-    if (waypoints) url.searchParams.set("waypoints", waypoints);
-    url.searchParams.set("travelmode", "driving");
-    url.searchParams.set("dir_action", "navigate");
+  const url = new URL("https://www.google.com/maps/dir/");
+  url.searchParams.set("api", "1");
+  url.searchParams.set("destination", destination);
+  if (waypoints) url.searchParams.set("waypoints", waypoints);
 
     if (targetWindow && !targetWindow.closed) {
       targetWindow.location.href = url.toString();
@@ -511,12 +508,9 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
       const orderedStops = orderRouteByLocation(dailyOrders, location);
       if (location) {
         setGeo(location);
-        setStatus("Ruta abierta desde tu ubicacion actual.");
+        setStatus("Ruta abierta desde tu ubicacion actual. Puedes elegir el modo de viaje en Maps.");
       } else {
-        setStatus("Ruta abierta. Si activas tu ubicacion, el orden mejora todavia mas.");
-      }
-      if (isMobileDevice() && orderedStops.length > 1) {
-        setStatus("Abriendo la primera parada para iniciar el viaje. Las siguientes quedan ordenadas en la agenda.");
+        setStatus("Ruta abierta. Puedes elegir el modo de viaje en Maps.");
       }
       launchGoogleMapsRoute(orderedStops, routeWindow);
     };
