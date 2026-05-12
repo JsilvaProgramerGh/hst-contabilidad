@@ -871,8 +871,10 @@ export default function CotizacionPRO() {
       })),
     };
 
-    const res = await fetch("/api/quotes", {
-      method: "POST",
+    const endpoint = quoteId ? `/api/quotes/${quoteId}` : "/api/quotes";
+    const method = quoteId ? "PATCH" : "POST";
+    const res = await fetch(endpoint, {
+      method,
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
@@ -880,7 +882,7 @@ export default function CotizacionPRO() {
     const json = await res.json();
     if (!res.ok) return alert(json.error || "Error guardando cotización");
 
-    const id = json?.data?.quote?.id ?? null;
+    const id = json?.data?.quote?.id ?? quoteId ?? null;
     setQuoteId(id);
     if (saveCustomerEnabled) {
       await saveCustomerFromQuote();
@@ -889,6 +891,7 @@ export default function CotizacionPRO() {
     }
 
     alert(alsoUploadPdf ? "✅ Guardado + PDF subido (link listo para compartir)." : "✅ Cotización guardada.");
+    return { id, pdf_url };
   };
 
   const loadList = async () => {
@@ -974,14 +977,32 @@ export default function CotizacionPRO() {
   };
 
   const whatsappShare = async () => {
-    let link: string | null = null;
+    const phone = clientPhone.replace(/\D/g, "");
+    if (!phone) return alert("Falta el telefono del cliente.");
 
-    if (quoteId) {
-      const r = await fetch(`/api/quotes/${quoteId}`);
+    let link: string | null = null;
+    let activeId = quoteId;
+
+    if (!activeId) {
+      const result = await saveQuote(true);
+      activeId = result?.id ?? null;
+      link = result?.pdf_url ?? null;
+    }
+
+    if (activeId && !link) {
+      const r = await fetch(`/api/quotes/${activeId}`);
       const j = await r.json();
       if (r.ok) link = j?.data?.quote?.pdf_url || null;
     }
     if (!link) link = await uploadPDFandGetUrl();
+
+    if (activeId && link) {
+      await fetch(`/api/quotes/${activeId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ quote: { pdf_url: link } }),
+      });
+    }
 
     const msg = [
       `*${COMPANY.name}*`,
@@ -993,24 +1014,39 @@ export default function CotizacionPRO() {
       .filter(Boolean)
       .join("\n");
 
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
   const emailSend = async () => {
-    if (!quoteId) return alert("Primero guarda la cotización.");
     if (!clientEmail?.trim()) return alert("Falta el email del cliente.");
 
     let link: string | null = null;
+    let activeId = quoteId;
+
+    if (!activeId) {
+      const result = await saveQuote(true);
+      activeId = result?.id ?? null;
+      link = result?.pdf_url ?? null;
+    }
 
     try {
-      const r = await fetch(`/api/quotes/${quoteId}`);
+      if (!activeId) throw new Error("No pude preparar la cotización.");
+      const r = await fetch(`/api/quotes/${activeId}`);
       const j = await r.json();
       if (r.ok) link = j?.data?.quote?.pdf_url || null;
     } catch {}
 
     if (!link) link = await uploadPDFandGetUrl();
 
-    const r = await fetch(`/api/quotes/${quoteId}/email`, {
+    if (activeId && link) {
+      await fetch(`/api/quotes/${activeId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ quote: { pdf_url: link } }),
+      });
+    }
+
+    const r = await fetch(`/api/quotes/${activeId}/email`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: clientEmail, pdf_url: link }),
