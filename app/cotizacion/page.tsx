@@ -176,6 +176,7 @@ export default function CotizacionPRO() {
   const [inventoryCatalog, setInventoryCatalog] = useState<InventoryEntry[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
+  const saveQuoteRef = useRef<Promise<{ id: string | null; pdf_url: string | null } | void> | null>(null);
 
   // historial
   const [list, setList] = useState<any[]>([]);
@@ -538,6 +539,41 @@ export default function CotizacionPRO() {
 
   const exportingRef = useRef(false);
 
+  const buildQuotePayload = (pdf_url?: string | null) => ({
+    quote: {
+      quote_no: quoteNo,
+      date: dateStr,
+      valid_days: integerValue(validDays, 15),
+      client_name: clientName,
+      client_id: clientId,
+      client_phone: clientPhone,
+      client_email: clientEmail,
+      client_address: clientAddress,
+      iva_rate: ivaRate,
+      discount: decimalValue(discount),
+      delivery: decimalValue(delivery),
+      paid: decimalValue(paid),
+      terms,
+      notes,
+      pdf_url: pdf_url ?? undefined,
+    },
+    items: items.map((it) => ({
+      qty: decimalValue(it.qty),
+      description: it.description,
+      unit: decimalValue(it.unit),
+      incl_vat: it.incl_vat,
+    })),
+  });
+
+  const findQuoteByNumber = async (number: string) => {
+    const response = await fetch(`/api/quotes?quote_no=${encodeURIComponent(number)}`);
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(json.error || "No pude buscar la cotizacion existente.");
+    }
+    return json?.data?.quote ?? null;
+  };
+
   const buildPDF = async () => {
     const doc = new jsPDF("p", "mm", "a4");
     const pageW = doc.internal.pageSize.getWidth();
@@ -842,56 +878,61 @@ export default function CotizacionPRO() {
   };
 
   const saveQuote = async (alsoUploadPdf: boolean) => {
-    let pdf_url: string | null = null;
-    if (alsoUploadPdf) pdf_url = await uploadPDFandGetUrl();
+    if (saveQuoteRef.current) return saveQuoteRef.current;
 
-    const payload = {
-      quote: {
-        quote_no: quoteNo,
-        date: dateStr,
-        valid_days: integerValue(validDays, 15),
-        client_name: clientName,
-        client_id: clientId,
-        client_phone: clientPhone,
-        client_email: clientEmail,
-        client_address: clientAddress,
-        iva_rate: ivaRate,
-        discount: decimalValue(discount),
-        delivery: decimalValue(delivery),
-        paid: decimalValue(paid),
-        terms,
-        notes,
-        pdf_url: pdf_url ?? undefined,
-      },
-      items: items.map((it) => ({
-        qty: decimalValue(it.qty),
-        description: it.description,
-        unit: decimalValue(it.unit),
-        incl_vat: it.incl_vat,
-      })),
+    const run = async () => {
+      let pdf_url: string | null = null;
+      if (alsoUploadPdf) pdf_url = await uploadPDFandGetUrl();
+
+      const payload = buildQuotePayload(pdf_url);
+
+      const endpoint = quoteId ? `/api/quotes/${quoteId}` : "/api/quotes";
+      const method = quoteId ? "PATCH" : "POST";
+      let res = await fetch(endpoint, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      let json = await res.json();
+
+      if (!res.ok && !quoteId && String(json?.error || "").includes("quotes_quote_no_key")) {
+        const existing = await findQuoteByNumber(quoteNo);
+        if (existing?.id) {
+          setQuoteId(existing.id);
+          res = await fetch(`/api/quotes/${existing.id}`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          json = await res.json();
+        }
+      }
+
+      if (!res.ok) {
+        alert(json.error || "Error guardando cotizacion");
+        return;
+      }
+
+      const id = json?.data?.quote?.id ?? quoteId ?? null;
+      setQuoteId(id);
+      if (json?.data?.quote?.quote_no) setQuoteNo(json.data.quote.quote_no);
+      if (saveCustomerEnabled) {
+        await saveCustomerFromQuote();
+      } else {
+        setCustomerSyncStatus("Cotizacion guardada sin actualizar la base de clientes.");
+      }
+
+      alert(alsoUploadPdf ? "Guardado + PDF subido (link listo para compartir)." : "Cotizacion guardada.");
+      return { id, pdf_url };
     };
 
-    const endpoint = quoteId ? `/api/quotes/${quoteId}` : "/api/quotes";
-    const method = quoteId ? "PATCH" : "POST";
-    const res = await fetch(endpoint, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const json = await res.json();
-    if (!res.ok) return alert(json.error || "Error guardando cotización");
-
-    const id = json?.data?.quote?.id ?? quoteId ?? null;
-    setQuoteId(id);
-    if (saveCustomerEnabled) {
-      await saveCustomerFromQuote();
-    } else {
-      setCustomerSyncStatus("Cotizacion guardada sin actualizar la base de clientes.");
+    saveQuoteRef.current = run();
+    try {
+      return await saveQuoteRef.current;
+    } finally {
+      saveQuoteRef.current = null;
     }
-
-    alert(alsoUploadPdf ? "✅ Guardado + PDF subido (link listo para compartir)." : "✅ Cotización guardada.");
-    return { id, pdf_url };
   };
 
   const loadList = async () => {

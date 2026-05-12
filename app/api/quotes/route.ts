@@ -36,6 +36,7 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const id = url.searchParams.get("id");
+    const quoteNo = url.searchParams.get("quote_no");
     const sb = supabaseServer();
 
     if (id) {
@@ -50,6 +51,15 @@ export async function GET(request: Request) {
       }
 
       return NextResponse.json({ data: { quote, items: items ?? [] } });
+    }
+
+    if (quoteNo) {
+      const { data: quote, error } = await sb.from("quotes").select("*").eq("quote_no", quoteNo).maybeSingle();
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+
+      return NextResponse.json({ data: { quote: quote ?? null } });
     }
 
     const { data: quotes, error } = await sb.from("quotes").select("*").order("created_at", { ascending: false }).limit(50);
