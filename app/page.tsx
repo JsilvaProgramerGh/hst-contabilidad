@@ -65,6 +65,12 @@ function InventoryDrawer() {
           <Link style={drawerItem} href="/cotizacion" onClick={() => setOpen(false)}>
             Cotizaciones
           </Link>
+          <Link style={drawerItem} href="/agenda-pedidos" onClick={() => setOpen(false)}>
+            Agenda de pedidos
+          </Link>
+          <Link style={drawerItem} href="/agenda-pendientes" onClick={() => setOpen(false)}>
+            Agenda de pendientes
+          </Link>
         </nav>
 
         <div style={drawerDivider} />
@@ -964,6 +970,35 @@ export default function Home() {
         <Card title="Ingresos" value={`$${ingresos.toFixed(2)}`} />
         <Card title="Gastos" value={`$${gastos.toFixed(2)}`} />
         <Card title="Por cobrar" value={`$${porCobrar.toFixed(2)}`} />
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))",
+          gap: "18px",
+          marginTop: "24px",
+        }}
+      >
+        <Link href="/agenda-pedidos" style={{ ...panel, textDecoration: "none", display: "grid", gap: 8 }}>
+          <div style={{ color: "#93c5fd", fontSize: 12, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase" }}>
+            Operacion diaria
+          </div>
+          <div style={{ color: "#f7fbff", fontSize: 26, fontWeight: 800 }}>Agenda de pedidos</div>
+          <div style={{ color: "#8ea1bb", lineHeight: 1.6 }}>
+            Organiza envios, pendientes de entrega y arma la ruta del dia desde tu ubicacion.
+          </div>
+        </Link>
+
+        <Link href="/agenda-pendientes" style={{ ...panel, textDecoration: "none", display: "grid", gap: 8 }}>
+          <div style={{ color: "#5eead4", fontSize: 12, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase" }}>
+            Seguimiento
+          </div>
+          <div style={{ color: "#f7fbff", fontSize: 26, fontWeight: 800 }}>Agenda de pendientes</div>
+          <div style={{ color: "#8ea1bb", lineHeight: 1.6 }}>
+            Guarda tareas importantes como facturar, llamar clientes o resolver temas internos.
+          </div>
+        </Link>
       </div>
 
       <div

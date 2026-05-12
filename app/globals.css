@@ -114,3 +114,65 @@ textarea {
     font-size: 32px !important;
   }
 }
+
+@media (max-width: 820px) {
+  .mobile-agenda-page {
+    padding: 16px !important;
+  }
+
+  .mobile-agenda-hero {
+    align-items: flex-start !important;
+  }
+
+  .mobile-agenda-stats,
+  .mobile-agenda-layout,
+  .mobile-agenda-form-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .mobile-agenda-inline,
+  .mobile-agenda-buttons {
+    grid-template-columns: minmax(0, 1fr) !important;
+    display: grid !important;
+  }
+
+  .mobile-agenda-buttons > * {
+    width: 100%;
+  }
+
+  .mobile-agenda-list-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .mobile-agenda-row-actions {
+    justify-content: stretch !important;
+  }
+
+  .mobile-agenda-row-actions > * {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .mobile-agenda-page {
+    padding: 12px !important;
+  }
+
+  .mobile-agenda-page h1 {
+    font-size: 26px !important;
+    line-height: 1.1 !important;
+  }
+
+  .mobile-agenda-page h2 {
+    font-size: 20px !important;
+  }
+
+  .mobile-agenda-page input,
+  .mobile-agenda-page select,
+  .mobile-agenda-page textarea,
+  .mobile-agenda-page button,
+  .mobile-agenda-page a {
+    font-size: 16px !important;
+  }
+}
