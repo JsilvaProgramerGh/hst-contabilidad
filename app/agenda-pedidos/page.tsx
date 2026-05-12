@@ -459,7 +459,12 @@ export default function AgendaPedidosPage() {
     setStatus("Ruta guardada para el dia.");
   }
 
-  function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Window | null) {
+function isMobileDevice() {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
+function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Window | null) {
     const usable = orderedStops.filter((row) => row.address.trim());
     if (usable.length === 0) {
       alert("No hay direcciones listas para armar la ruta.");
@@ -487,11 +492,16 @@ export default function AgendaPedidosPage() {
       return;
     }
 
-    window.open(url.toString(), "_blank", "noopener,noreferrer");
+    if (isMobileDevice()) {
+      window.location.href = url.toString();
+      return;
+    }
+
+    window.open(url.toString(), "_blank");
   }
 
   function openGoogleMapsRoute() {
-    const routeWindow = window.open("", "_blank", "noopener,noreferrer");
+    const routeWindow = isMobileDevice() ? null : window.open("", "_blank");
 
     const startRoute = (location: { lat: number; lng: number } | null) => {
       const orderedStops = orderRouteByLocation(dailyOrders, location);
