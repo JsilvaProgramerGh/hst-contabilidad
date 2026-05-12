@@ -40,7 +40,7 @@ export async function POST(
     const resend = new Resend(resendApiKey);
     const pdfUrl = body?.pdf_url || data.pdf_url || null;
 
-    await resend.emails.send({
+    const { data: emailData, error: sendError } = await resend.emails.send({
       from: emailFrom,
       to: email,
       subject: `Cotizacion ${data.quote_no} - ${data.client_name || "HST Global Store"}`,
@@ -63,7 +63,21 @@ export async function POST(
       `,
     });
 
-    return NextResponse.json({ ok: true });
+    if (sendError) {
+      return NextResponse.json(
+        { error: sendError.message || "Resend no pudo enviar el correo." },
+        { status: 400 },
+      );
+    }
+
+    if (!emailData?.id) {
+      return NextResponse.json(
+        { error: "Resend no confirmo el envio del correo." },
+        { status: 502 },
+      );
+    }
+
+    return NextResponse.json({ ok: true, id: emailData.id });
   } catch (error) {
     return NextResponse.json({ error: getMessage(error) }, { status: 500 });
   }
