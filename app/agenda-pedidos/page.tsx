@@ -109,14 +109,34 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   return 2 * r * Math.asin(Math.sqrt(a));
 }
 
+function parseTimeToMinutes(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return Number.POSITIVE_INFINITY;
+  const match = raw.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return Number.POSITIVE_INFINITY;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return Number.POSITIVE_INFINITY;
+  return hours * 60 + minutes;
+}
+
+function compareOrdersByDateAndTime(a: DeliveryOrder, b: DeliveryOrder) {
+  const byDate = String(a.delivery_date || "").localeCompare(String(b.delivery_date || ""));
+  if (byDate !== 0) return byDate;
+
+  const byTime = parseTimeToMinutes(a.time_window) - parseTimeToMinutes(b.time_window);
+  if (byTime !== 0) return byTime;
+
+  const byPosition = (a.route_position ?? 9999) - (b.route_position ?? 9999);
+  if (byPosition !== 0) return byPosition;
+
+  return String(a.client_name || "").localeCompare(String(b.client_name || ""));
+}
+
 function orderRouteByLocation(orders: DeliveryOrder[], location: { lat: number; lng: number } | null) {
   const active = orders.filter((row) => row.status !== "ENTREGADO" && row.status !== "CANCELADO");
   if (!location) {
-    return [...active].sort((a, b) => {
-      const byPosition = (a.route_position ?? 9999) - (b.route_position ?? 9999);
-      if (byPosition !== 0) return byPosition;
-      return a.priority.localeCompare(b.priority);
-    });
+    return [...active].sort(compareOrdersByDateAndTime);
   }
 
   const withCoords = active.filter((row) => row.latitude != null && row.longitude != null);
@@ -140,7 +160,11 @@ function orderRouteByLocation(orders: DeliveryOrder[], location: { lat: number; 
     current = { lat: Number(next.latitude), lng: Number(next.longitude) };
   }
 
-  return [...ordered, ...withoutCoords];
+  return [...ordered, ...withoutCoords].sort((a, b) => {
+    const byTime = parseTimeToMinutes(a.time_window) - parseTimeToMinutes(b.time_window);
+    if (byTime !== 0) return byTime;
+    return String(a.client_name || "").localeCompare(String(b.client_name || ""));
+  });
 }
 
 function getMapsStopValue(row: DeliveryOrder) {
@@ -179,7 +203,8 @@ export default function AgendaPedidosPage() {
       return;
     }
 
-    setRows((data as DeliveryOrder[]) || []);
+    const sortedRows = [...((data as DeliveryOrder[]) || [])].sort(compareOrdersByDateAndTime);
+    setRows(sortedRows);
     setTableReady(true);
     setStatus(`Pedidos cargados: ${(data || []).length}`);
     setLoading(false);
@@ -238,8 +263,12 @@ export default function AgendaPedidosPage() {
   }
 
   async function saveOrder() {
+    if (!form.delivery_date) {
+      return alert("Primero elige la fecha del pedido.");
+    }
+
     if (!form.client_name.trim() || !form.address.trim()) {
-      return alert("Pon al menos cliente y direccion.");
+      return alert("Pon al menos fecha, cliente y direccion.");
     }
 
     setLoading(true);
@@ -533,8 +562,13 @@ export default function AgendaPedidosPage() {
             <Field label="Telefono">
               <input style={input} value={form.phone} onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))} placeholder="098..." />
             </Field>
-            <Field label="Horario">
-              <input style={input} value={form.time_window} onChange={(e) => setForm((prev) => ({ ...prev, time_window: e.target.value }))} placeholder="9:00 - 11:00" />
+            <Field label="Hora de entrega">
+              <input
+                type="time"
+                style={input}
+                value={form.time_window}
+                onChange={(e) => setForm((prev) => ({ ...prev, time_window: e.target.value }))}
+              />
             </Field>
             <Field label="Direccion" full>
               <div style={pasteRow} className="mobile-agenda-inline">
@@ -666,7 +700,7 @@ export default function AgendaPedidosPage() {
                   <div style={{ minWidth: 0 }}>
                     <div style={routeBadge}>Parada {index + 1}</div>
                     <div style={rowTitle}>{row.client_name}</div>
-                    <div style={rowMeta}>{[row.phone, row.time_window, row.priority, row.status].filter(Boolean).join(" - ")}</div>
+                    <div style={rowMeta}>{[row.phone, row.time_window || "Sin hora", row.priority, row.status].filter(Boolean).join(" - ")}</div>
                     <div style={rowAddress}>{row.address}</div>
                     <div style={rowHint}>
                       {row.latitude != null && row.longitude != null ? "Coordenadas listas" : "Sin coordenadas todavia"}
