@@ -106,6 +106,29 @@ function inferDocumentType(value: string) {
   return null;
 }
 
+function normalizeWhatsappPhone(raw: string) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (!digits) return "";
+
+  if (digits.startsWith("593") && digits.length >= 11) {
+    return digits;
+  }
+
+  if (digits.length === 10 && digits.startsWith("0")) {
+    return `593${digits.slice(1)}`;
+  }
+
+  if (digits.length === 9 && digits.startsWith("9")) {
+    return `593${digits}`;
+  }
+
+  if (digits.startsWith("00") && digits.length > 4) {
+    return digits.slice(2);
+  }
+
+  return digits;
+}
+
 function genQuoteNo() {
   const d = new Date();
   const y = d.getFullYear();
@@ -1018,7 +1041,7 @@ export default function CotizacionPRO() {
   };
 
   const whatsappShare = async () => {
-    const phone = clientPhone.replace(/\D/g, "");
+    const phone = normalizeWhatsappPhone(clientPhone);
     if (!phone) return alert("Falta el telefono del cliente.");
 
     let link: string | null = null;
@@ -1055,7 +1078,8 @@ export default function CotizacionPRO() {
       .filter(Boolean)
       .join("\n");
 
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+    const whatsappUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(msg)}`;
+    window.location.href = whatsappUrl;
   };
 
   const emailSend = async () => {
