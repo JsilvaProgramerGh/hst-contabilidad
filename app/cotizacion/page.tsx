@@ -38,7 +38,31 @@ type InventoryEntry = {
   attributes: Record<string, string>;
 };
 
+type ReceiptStatus =
+  | "PENDIENTE_PAGO"
+  | "ABONADO"
+  | "PAGADO"
+  | "PENDIENTE_ENTREGA"
+  | "ENTREGADO"
+  | "ANULADO";
+
+type ReceiptRecord = {
+  id: string;
+  invoice_no: string;
+  receipt_status: ReceiptStatus;
+  delivery_date: string | null;
+  delivery_time: string | null;
+};
+
 const IVA_DEFAULT = 0.15;
+const RECEIPT_STATUS_OPTIONS: Array<{ value: ReceiptStatus; label: string }> = [
+  { value: "PENDIENTE_PAGO", label: "Pago pendiente" },
+  { value: "ABONADO", label: "Abonado" },
+  { value: "PAGADO", label: "Pagado" },
+  { value: "PENDIENTE_ENTREGA", label: "Pendiente de entrega" },
+  { value: "ENTREGADO", label: "Entregado" },
+  { value: "ANULADO", label: "Anulado" },
+];
 
 const COMPANY = {
   name: "HST GLOBAL STORE",
@@ -129,6 +153,10 @@ function normalizeWhatsappPhone(raw: string) {
   return digits;
 }
 
+function receiptStatusLabel(status: ReceiptStatus) {
+  return RECEIPT_STATUS_OPTIONS.find((option) => option.value === status)?.label || status;
+}
+
 function genQuoteNo() {
   const d = new Date();
   const y = d.getFullYear();
@@ -200,6 +228,11 @@ export default function CotizacionPRO() {
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
   const saveQuoteRef = useRef<Promise<{ id: string | null; pdf_url: string | null } | void> | null>(null);
+  const [receiptId, setReceiptId] = useState<string | null>(null);
+  const [receiptNo, setReceiptNo] = useState("");
+  const [receiptStatus, setReceiptStatus] = useState<ReceiptStatus>("PENDIENTE_PAGO");
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [deliveryTime, setDeliveryTime] = useState("");
 
   // historial
   const [list, setList] = useState<any[]>([]);
@@ -280,6 +313,15 @@ export default function CotizacionPRO() {
       clearTimeout(timer);
     };
   }, [clientId, customerTableReady, selectedCustomer]);
+
+  useEffect(() => {
+    if (!quoteId) {
+      resetReceiptDraft();
+      return;
+    }
+
+    loadReceiptForQuote(quoteId);
+  }, [quoteId]);
 
   const totals = useMemo(() => {
     const lines = items.map((it) => {
@@ -595,6 +637,32 @@ export default function CotizacionPRO() {
       throw new Error(json.error || "No pude buscar la cotizacion existente.");
     }
     return json?.data?.quote ?? null;
+  };
+
+  const resetReceiptDraft = () => {
+    setReceiptId(null);
+    setReceiptNo("");
+    setReceiptStatus("PENDIENTE_PAGO");
+    setDeliveryDate("");
+    setDeliveryTime("");
+  };
+
+  const loadReceiptForQuote = async (id: string) => {
+    const response = await fetch(`/api/quotes/${id}/convert`);
+    const json = await response.json();
+    if (!response.ok) return;
+
+    const receipt = (json?.data?.receipt || null) as ReceiptRecord | null;
+    if (!receipt) {
+      resetReceiptDraft();
+      return;
+    }
+
+    setReceiptId(receipt.id);
+    setReceiptNo(receipt.invoice_no || "");
+    setReceiptStatus(receipt.receipt_status || "PENDIENTE_PAGO");
+    setDeliveryDate(receipt.delivery_date || "");
+    setDeliveryTime(receipt.delivery_time || "");
   };
 
   const buildPDF = async () => {
@@ -1033,11 +1101,40 @@ export default function CotizacionPRO() {
   };
 
   const convertToInvoice = async () => {
-    if (!quoteId) return alert("Primero guarda la cotización.");
-    const res = await fetch(`/api/quotes/${quoteId}/convert`, { method: "POST" });
+    if (!quoteId) return alert("Primero guarda la cotizacion.");
+
+    const res = await fetch(`/api/quotes/${quoteId}/convert`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        status: receiptStatus,
+        delivery_date: deliveryDate || null,
+        delivery_time: deliveryTime || null,
+      }),
+    });
     const json = await res.json();
-    if (!res.ok) return alert(json.error || "Error convirtiendo");
-    alert(`✅ Convertido a FACTURA ${json.data.invoice_no}`);
+    if (!res.ok) return alert(json.error || "Error convirtiendo a recibo");
+
+    const receipt = (json?.data?.receipt || null) as ReceiptRecord | null;
+    if (receipt) {
+      setReceiptId(receipt.id);
+      setReceiptNo(receipt.invoice_no || "");
+      setReceiptStatus(receipt.receipt_status || "PENDIENTE_PAGO");
+      setDeliveryDate(receipt.delivery_date || "");
+      setDeliveryTime(receipt.delivery_time || "");
+    }
+
+    const deliveryMessage = json?.data?.delivery_message
+      ? `\nAgenda de pedidos: ${json.data.delivery_message}`
+      : json?.data?.delivery_order
+        ? "\nAgenda de pedidos: agregado o actualizado automaticamente."
+        : "";
+
+    alert(
+      `Recibo listo: ${receipt?.invoice_no || "sin numero"}\nEstado: ${receiptStatusLabel(
+        receipt?.receipt_status || receiptStatus,
+      )}${deliveryMessage}`,
+    );
   };
 
   const whatsappShare = async () => {
@@ -1575,6 +1672,36 @@ export default function CotizacionPRO() {
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }} className="mobile-quotes-action-grid">
+                <div style={{ gridColumn: "1 / -1", display: "grid", gap: 10, padding: 12, borderRadius: 16, border: "1px solid rgba(148, 163, 184, 0.12)", background: "rgba(8, 14, 24, 0.7)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    <div style={{ fontWeight: 900, color: "#f8fafc" }}>Configuracion del recibo</div>
+                    {receiptNo ? <div style={{ color: "#93c5fd", fontSize: 12, fontWeight: 700 }}>Recibo: {receiptNo}</div> : null}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }} className="mobile-quotes-form-grid">
+                    <div>
+                      <label style={label()}>Estado del recibo</label>
+                      <select style={input()} value={receiptStatus} onChange={(e) => setReceiptStatus(e.target.value as ReceiptStatus)}>
+                        {RECEIPT_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={label()}>Fecha de entrega</label>
+                      <input style={input()} type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={label()}>Hora de entrega</label>
+                      <input style={input()} type="time" value={deliveryTime} onChange={(e) => setDeliveryTime(e.target.value)} />
+                    </div>
+                  </div>
+                  <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6 }}>
+                    Al convertir, el recibo guarda su estado y, si pones fecha de entrega, se sincroniza automaticamente con la agenda de pedidos.
+                  </div>
+                </div>
+
                 <button onClick={downloadPDF} style={btnPrimary()}>
                   Descargar PDF
                 </button>
@@ -1590,7 +1717,7 @@ export default function CotizacionPRO() {
                 </button>
 
                 <button onClick={convertToInvoice} style={btn()}>
-                  Convertir a factura
+                  Convertir a recibo
                 </button>
 
                 <button onClick={emailSend} style={btnPrimary()}>
