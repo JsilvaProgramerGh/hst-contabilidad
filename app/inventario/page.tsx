@@ -50,11 +50,7 @@ export default function InventarioPage() {
   const [search, setSearch] = useState("");
 
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
   const [active, setActive] = useState(true);
-  const [productType, setProductType] = useState("");
-  const [supplier, setSupplier] = useState("");
-  const [tags, setTags] = useState("");
   const [skuBase, setSkuBase] = useState("");
   const [barcode, setBarcode] = useState("");
   const [price, setPrice] = useState("0");
@@ -141,7 +137,7 @@ export default function InventarioPage() {
       name: title.trim(),
       sku: skuBase.trim() || null,
       unit: unit.trim() || null,
-      description: [description.trim(), productType ? `Tipo: ${productType}` : "", supplier ? `Proveedor: ${supplier}` : "", tags ? `Etiquetas: ${tags}` : ""].filter(Boolean).join(" | "),
+      description: null,
       category_id: childId || parentId || null,
       active,
     }).select("id").single();
@@ -166,7 +162,7 @@ export default function InventarioPage() {
   }
 
   function resetForm() {
-    setTitle(""); setDescription(""); setActive(true); setProductType(""); setSupplier(""); setTags("");
+    setTitle(""); setActive(true);
     setSkuBase(""); setBarcode(""); setPrice("0"); setCost("0"); setQty("0"); setMinQty("0");
     setUnit("unidad"); setBoxUnit("caja"); setUnitsPerBox("100"); setWeight(""); setWeightUnit("g");
     setParentId(""); setChildId(""); setGroups(defaultGroups); setDrafts([]);
@@ -179,7 +175,6 @@ export default function InventarioPage() {
         <div style={{ display: "grid", gap: 18 }}>
           <Card title="Informacion general">
             <Field label="Titulo"><input style={input} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Guantes de nitrilo" /></Field>
-            <Field label="Descripcion"><textarea style={editor} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe el producto como si fuera una tienda online." /></Field>
             <div style={two} className="inventory-mobile-grid-2"><Field label="Categoria"><select style={input} value={parentId} onChange={(e) => { setParentId(e.target.value); setChildId(""); }}><option value="">Elige una categoria</option>{roots.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field><Field label="Subcategoria"><select style={input} value={childId} onChange={(e) => setChildId(e.target.value)} disabled={!parentId}><option value="">{parentId ? "Selecciona una subcategoria" : "Elige categoria primero"}</option>{children.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field></div>
             <div style={two} className="inventory-mobile-grid-2"><Field label="Crear categoria"><div style={inline} className="inventory-mobile-inline"><input style={input} value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="Guantes" /><button style={btnGhost} onClick={async () => { await addCategory(null, newCategory); setNewCategory(""); }}>Crear</button></div></Field><Field label="Crear subcategoria"><div style={inline} className="inventory-mobile-inline"><input style={input} value={newSubCategory} onChange={(e) => setNewSubCategory(e.target.value)} placeholder="Nitrilo" /><button style={btnGhost} onClick={async () => { if (!parentId) return alert("Selecciona una categoria principal."); await addCategory(parentId, newSubCategory); setNewSubCategory(""); }}>Crear</button></div></Field></div>
           </Card>
@@ -228,12 +223,6 @@ export default function InventarioPage() {
         </div>
 
         <aside style={{ display: "grid", gap: 18 }} className="inventory-mobile-sidebar">
-          <Card title="Organizacion del producto">
-            <Field label="Tipo"><input style={input} value={productType} onChange={(e) => setProductType(e.target.value)} placeholder="Guantes, Limpieza, Accesorio..." /></Field>
-            <Field label="Proveedor"><input style={input} value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Nombre del proveedor" /></Field>
-            <Field label="Etiquetas"><input style={input} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="hospital, nitrilo, sin polvo" /></Field>
-          </Card>
-
           <Card title="Catalogo actual">
             <input style={{ ...input, marginBottom: 12 }} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar producto o variante" />
             <div style={catalog}>
@@ -246,7 +235,6 @@ export default function InventarioPage() {
                   <div key={p.id} style={box}>
                     <div style={{ fontWeight: 800 }}>{p.name}</div>
                     <div style={muted}>{[p.sku ? `SKU: ${p.sku}` : null, p.unit ? `Unidad: ${p.unit}` : null, `Categoria: ${categoryName}`].filter(Boolean).join(" - ")}</div>
-                    {p.description ? <div style={{ ...muted, marginTop: 6 }}>{p.description}</div> : null}
                     <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
                       {rows.length === 0 ? (
                         <div style={muted}>Sin variantes.</div>
@@ -290,7 +278,6 @@ const pill: CSSProperties = { padding: "10px 14px", borderRadius: 999, backgroun
 const field: CSSProperties = { display: "grid", gap: 6 };
 const fieldLabel: CSSProperties = { color: "#cbd5e1", fontSize: 13, fontWeight: 700 };
 const input: CSSProperties = { width: "100%", minHeight: 46, borderRadius: 14, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(15,23,42,0.72)", color: "#f8fafc", padding: "12px 14px", outline: "none" };
-const editor: CSSProperties = { ...input, minHeight: 170, resize: "vertical" };
 const two: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 };
 const three: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 };
 const inline: CSSProperties = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10 };

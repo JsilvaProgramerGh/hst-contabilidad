@@ -12,8 +12,8 @@ export default function InventarioLayout({ children }: { children: ReactNode }) 
   const pathname = usePathname();
 
   return (
-    <div style={shell}>
-      <aside style={sidebar}>
+    <div style={shell} className="inventory-shell">
+      <aside style={sidebar} className="inventory-sidebar-panel">
         <div style={brandCard}>
           <div style={eyebrow}>HST Suite</div>
           <div style={brandTitle}>Inventario</div>
@@ -47,7 +47,7 @@ export default function InventarioLayout({ children }: { children: ReactNode }) 
       </aside>
 
       <div style={mainColumn}>
-        <header style={mobileHeader}>
+        <header style={mobileHeader} className="inventory-mobile-header">
           <div>
             <div style={mobileEyebrow}>HST</div>
             <div style={mobileTitle}>Inventario</div>

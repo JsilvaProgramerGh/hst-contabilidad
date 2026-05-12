@@ -241,12 +241,24 @@ textarea {
 }
 
 @media (max-width: 900px) {
+  .inventory-sidebar-panel {
+    display: none !important;
+  }
+
+  .inventory-mobile-header {
+    display: flex !important;
+  }
+
+  .inventory-shell {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
   .inventory-mobile-layout {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
   .inventory-mobile-sidebar {
-    order: -1;
+    order: 2;
   }
 
   .inventory-mobile-grid-2,
@@ -271,6 +283,10 @@ textarea {
 @media (max-width: 560px) {
   .inventory-mobile-page {
     gap: 14px !important;
+  }
+
+  .inventory-mobile-page [style*="font-size: 24px"] {
+    font-size: 20px !important;
   }
 
   .inventory-mobile-page h1 {

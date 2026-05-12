@@ -13,6 +13,7 @@ type Item = {
   product_name?: string;
   variant_id?: string;
   sku?: string;
+  selected_attrs?: Record<string, string>;
 };
 type Customer = {
   id: string;
@@ -74,11 +75,27 @@ function integerValue(value: string | number | null | undefined, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function grossToNet(value: number, ivaRate: number) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (!Number.isFinite(ivaRate) || ivaRate <= 0) return value;
+  return value / (1 + ivaRate);
+}
+
 function catalogAttributeSummary(attributes: Record<string, string> | null | undefined) {
   return Object.entries(attributes || {})
     .filter(([key, value]) => value && !["imagen", "Imagen", "image_url", "producto_origen_id", "variante_origen_id", "slug_web"].includes(key))
     .map(([key, value]) => `${key}: ${value}`)
     .join(" · ");
+}
+
+function cleanVariantAttributes(attributes: Record<string, string> | null | undefined) {
+  return Object.fromEntries(
+    Object.entries(attributes || {}).filter(
+      ([key, value]) =>
+        Boolean(value) &&
+        !["imagen", "Imagen", "image_url", "producto_origen_id", "variante_origen_id", "slug_web", "origen_web", "SKU"].includes(key),
+    ),
+  );
 }
 
 function inferDocumentType(value: string) {
@@ -383,6 +400,7 @@ export default function CotizacionPRO() {
       sku: product.product_sku || undefined,
       unit: "",
       incl_vat: true,
+      selected_attrs: {},
     });
 
     if (product.variants.length === 1) {
@@ -391,16 +409,46 @@ export default function CotizacionPRO() {
   };
 
   const applyVariantToLine = (idx: number, entry: InventoryEntry) => {
+    const netUnit = grossToNet(entry.sale_price, ivaRate);
     updateItem(idx, {
       description: entry.variant_name,
       product_id: entry.product_id,
       product_name: entry.product_name,
-      unit: entry.sale_price ? entry.sale_price.toFixed(2) : "",
+      unit: netUnit ? netUnit.toFixed(2) : "",
       incl_vat: true,
       variant_id: entry.variant_id,
       sku: entry.product_sku || undefined,
+      selected_attrs: cleanVariantAttributes(entry.attributes),
     });
     setActiveLineIndex(idx);
+  };
+
+  const chooseVariantAttribute = (idx: number, attributeKey: string, value: string) => {
+    const selectedProduct = selectedProductForLine(idx);
+    if (!selectedProduct) return;
+
+    const nextAttrs = {
+      ...(items[idx].selected_attrs || {}),
+      [attributeKey]: value,
+    };
+
+    const matches = selectedProduct.variants.filter((variant) => {
+      const attrs = cleanVariantAttributes(variant.attributes);
+      return Object.entries(nextAttrs).every(([key, selectedValue]) => attrs[key] === selectedValue);
+    });
+    const netUnit = matches.length === 1 ? grossToNet(matches[0].sale_price, ivaRate) : 0;
+
+    updateItem(idx, {
+      selected_attrs: nextAttrs,
+      variant_id: matches.length === 1 ? matches[0].variant_id : undefined,
+      unit: netUnit ? netUnit.toFixed(2) : "",
+      sku: selectedProduct.product_sku || undefined,
+      description: matches.length === 1 ? matches[0].variant_name : selectedProduct.product_name,
+    });
+
+    if (matches.length === 1) {
+      applyVariantToLine(idx, matches[0]);
+    }
   };
 
   const selectedProductForLine = (idx: number) =>
@@ -416,6 +464,19 @@ export default function CotizacionPRO() {
   const renderCatalogAssist = (idx: number) => {
     const suggestions = productSuggestionsForLine(idx);
     const selectedProduct = selectedProductForLine(idx);
+    const selectedAttrs = items[idx].selected_attrs || {};
+    const attributeGroups = selectedProduct
+      ? Array.from(
+          selectedProduct.variants.reduce((map, variant) => {
+            const attrs = cleanVariantAttributes(variant.attributes);
+            Object.entries(attrs).forEach(([key, value]) => {
+              if (!map.has(key)) map.set(key, new Set<string>());
+              map.get(key)?.add(value);
+            });
+            return map;
+          }, new Map<string, Set<string>>()),
+        )
+      : [];
 
     return (
       <div style={{ display: "grid", gap: 8 }}>
@@ -441,21 +502,28 @@ export default function CotizacionPRO() {
         ) : null}
 
         {selectedProduct?.variants.length && selectedProduct.variants.length > 1 ? (
-          <select
-            style={input()}
-            value={items[idx].variant_id || ""}
-            onChange={(e) => {
-              const variant = selectedProduct.variants.find((entry) => entry.variant_id === e.target.value);
-              if (variant) applyVariantToLine(idx, variant);
-            }}
-          >
-            <option value="">Selecciona una variante</option>
-            {selectedProduct.variants.map((variant) => (
-              <option key={variant.variant_id} value={variant.variant_id}>
-                {variant.variant_name} - ${money(variant.sale_price)} - Stock {variant.stock}
-              </option>
+          <div style={variantPicker}>
+            {attributeGroups.map(([key, values]) => (
+              <div key={key} style={{ display: "grid", gap: 8 }}>
+                <div style={variantGroupLabel}>{key}</div>
+                <div style={variantChips}>
+                  {Array.from(values).map((value) => (
+                    <button
+                      key={`${key}-${value}`}
+                      type="button"
+                      onClick={() => chooseVariantAttribute(idx, key, value)}
+                      style={{
+                        ...variantChip,
+                        ...(selectedAttrs[key] === value ? variantChipActive : null),
+                      }}
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
-          </select>
+          </div>
         ) : null}
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1787,6 +1855,44 @@ const suggestionMeta: React.CSSProperties = {
   color: "#94a3b8",
   fontSize: 12,
   marginTop: 4,
+};
+
+const variantPicker: React.CSSProperties = {
+  display: "grid",
+  gap: 14,
+  padding: 12,
+  borderRadius: 16,
+  border: "1px solid rgba(148, 163, 184, 0.12)",
+  background: "rgba(15, 23, 37, 0.55)",
+};
+
+const variantGroupLabel: React.CSSProperties = {
+  color: "#e2e8f0",
+  fontSize: 13,
+  fontWeight: 800,
+  textTransform: "capitalize",
+};
+
+const variantChips: React.CSSProperties = {
+  display: "flex",
+  gap: 10,
+  flexWrap: "wrap",
+};
+
+const variantChip: React.CSSProperties = {
+  padding: "10px 16px",
+  borderRadius: 16,
+  border: "1px solid rgba(148, 163, 184, 0.18)",
+  background: "#ffffff",
+  color: "#0f172a",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const variantChipActive: React.CSSProperties = {
+  background: "linear-gradient(135deg, #2b8cff 0%, #1d6fe8 100%)",
+  border: "1px solid rgba(96, 165, 250, 0.3)",
+  color: "#ffffff",
 };
 
 function mobileLinkBtn(): React.CSSProperties {
