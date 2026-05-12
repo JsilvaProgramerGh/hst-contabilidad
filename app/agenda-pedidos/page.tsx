@@ -459,10 +459,11 @@ export default function AgendaPedidosPage() {
     setStatus("Ruta guardada para el dia.");
   }
 
-  function launchGoogleMapsRoute(orderedStops: DeliveryOrder[]) {
+  function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Window | null) {
     const usable = orderedStops.filter((row) => row.address.trim());
     if (usable.length === 0) {
       alert("No hay direcciones listas para armar la ruta.");
+      if (targetWindow && !targetWindow.closed) targetWindow.close();
       return;
     }
 
@@ -480,10 +481,18 @@ export default function AgendaPedidosPage() {
     if (waypoints) url.searchParams.set("waypoints", waypoints);
     url.searchParams.set("travelmode", "driving");
     url.searchParams.set("dir_action", "navigate");
-    window.open(url.toString(), "_blank");
+
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = url.toString();
+      return;
+    }
+
+    window.open(url.toString(), "_blank", "noopener,noreferrer");
   }
 
   function openGoogleMapsRoute() {
+    const routeWindow = window.open("", "_blank", "noopener,noreferrer");
+
     const startRoute = (location: { lat: number; lng: number } | null) => {
       const orderedStops = orderRouteByLocation(dailyOrders, location);
       if (location) {
@@ -492,7 +501,7 @@ export default function AgendaPedidosPage() {
       } else {
         setStatus("Ruta abierta. Si activas tu ubicacion, el orden mejora todavia mas.");
       }
-      launchGoogleMapsRoute(orderedStops);
+      launchGoogleMapsRoute(orderedStops, routeWindow);
     };
 
     if (!navigator.geolocation) {
