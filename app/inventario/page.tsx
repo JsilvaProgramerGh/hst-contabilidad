@@ -27,15 +27,10 @@ const slug = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").r
 const csv = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
 const presets = (k: OptionKind) => (k === "color" ? colors : k === "size" ? sizes : []);
 
-function imageFromAttributes(attributes: Record<string, string> | null | undefined) {
-  const value = attributes?.imagen || attributes?.Imagen || attributes?.image_url;
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
 function visibleAttributes(attributes: Record<string, string> | null | undefined) {
   return Object.entries(attributes || {}).filter(([key, value]) => {
     if (!value) return false;
-    return !["imagen", "Imagen", "image_url", "producto_origen_id", "variante_origen_id"].includes(key);
+    return !["imagen", "Imagen", "image_url", "producto_origen_id", "variante_origen_id", "slug_web"].includes(key);
   });
 }
 
@@ -178,25 +173,24 @@ export default function InventarioPage() {
   }
 
   return (
-    <main style={page}>
+    <main style={page} className="inventory-mobile-page">
       <div style={header}><div><div style={eyebrow}>Inventario</div><h1 style={h1}>Agregar producto</h1></div><div style={pill}>{status}</div></div>
-      <section style={layout}>
+      <section style={layout} className="inventory-mobile-layout">
         <div style={{ display: "grid", gap: 18 }}>
           <Card title="Informacion general">
             <Field label="Titulo"><input style={input} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Guantes de nitrilo" /></Field>
             <Field label="Descripcion"><textarea style={editor} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe el producto como si fuera una tienda online." /></Field>
-            <Field label="Multimedia"><div style={drop}>Aqui luego pondremos imagenes y archivos del producto.</div></Field>
-            <div style={two}><Field label="Categoria"><select style={input} value={parentId} onChange={(e) => { setParentId(e.target.value); setChildId(""); }}><option value="">Elige una categoria</option>{roots.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field><Field label="Subcategoria"><select style={input} value={childId} onChange={(e) => setChildId(e.target.value)} disabled={!parentId}><option value="">{parentId ? "Selecciona una subcategoria" : "Elige categoria primero"}</option>{children.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field></div>
-            <div style={two}><Field label="Crear categoria"><div style={inline}><input style={input} value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="Guantes" /><button style={btnGhost} onClick={async () => { await addCategory(null, newCategory); setNewCategory(""); }}>Crear</button></div></Field><Field label="Crear subcategoria"><div style={inline}><input style={input} value={newSubCategory} onChange={(e) => setNewSubCategory(e.target.value)} placeholder="Nitrilo" /><button style={btnGhost} onClick={async () => { if (!parentId) return alert("Selecciona una categoria principal."); await addCategory(parentId, newSubCategory); setNewSubCategory(""); }}>Crear</button></div></Field></div>
+            <div style={two} className="inventory-mobile-grid-2"><Field label="Categoria"><select style={input} value={parentId} onChange={(e) => { setParentId(e.target.value); setChildId(""); }}><option value="">Elige una categoria</option>{roots.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field><Field label="Subcategoria"><select style={input} value={childId} onChange={(e) => setChildId(e.target.value)} disabled={!parentId}><option value="">{parentId ? "Selecciona una subcategoria" : "Elige categoria primero"}</option>{children.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field></div>
+            <div style={two} className="inventory-mobile-grid-2"><Field label="Crear categoria"><div style={inline} className="inventory-mobile-inline"><input style={input} value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="Guantes" /><button style={btnGhost} onClick={async () => { await addCategory(null, newCategory); setNewCategory(""); }}>Crear</button></div></Field><Field label="Crear subcategoria"><div style={inline} className="inventory-mobile-inline"><input style={input} value={newSubCategory} onChange={(e) => setNewSubCategory(e.target.value)} placeholder="Nitrilo" /><button style={btnGhost} onClick={async () => { if (!parentId) return alert("Selecciona una categoria principal."); await addCategory(parentId, newSubCategory); setNewSubCategory(""); }}>Crear</button></div></Field></div>
           </Card>
 
           <Card title="Precio e inventario">
-            <div style={three}><Field label="Precio"><input style={input} value={price} onChange={(e) => setPrice(e.target.value)} /></Field><Field label="Costo por articulo"><input style={input} value={cost} onChange={(e) => setCost(e.target.value)} /></Field><Field label="Estado"><select style={input} value={active ? "activo" : "inactivo"} onChange={(e) => setActive(e.target.value === "activo")}><option value="activo">Activo</option><option value="inactivo">Inactivo</option></select></Field><Field label="Cantidad"><input style={input} value={qty} onChange={(e) => setQty(e.target.value)} /></Field><Field label="Stock minimo"><input style={input} value={minQty} onChange={(e) => setMinQty(e.target.value)} /></Field><Field label="SKU base"><input style={input} value={skuBase} onChange={(e) => setSkuBase(e.target.value)} /></Field><Field label="Codigo de barras"><input style={input} value={barcode} onChange={(e) => setBarcode(e.target.value)} /></Field><Field label="Tipo de unidad"><input style={input} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="unidad" /></Field><Field label="Tipo de caja"><input style={input} value={boxUnit} onChange={(e) => setBoxUnit(e.target.value)} placeholder="caja" /></Field><Field label="Unidades por caja"><input style={input} value={unitsPerBox} onChange={(e) => setUnitsPerBox(e.target.value)} /></Field><Field label="Peso"><div style={inline}><input style={input} value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="3.5" /><select style={{ ...input, width: 100 }} value={weightUnit} onChange={(e) => setWeightUnit(e.target.value)}><option value="g">g</option><option value="kg">kg</option><option value="lb">lb</option><option value="ml">ml</option></select></div></Field></div>
+            <div style={three} className="inventory-mobile-grid-3"><Field label="Precio"><input style={input} value={price} onChange={(e) => setPrice(e.target.value)} /></Field><Field label="Costo por articulo"><input style={input} value={cost} onChange={(e) => setCost(e.target.value)} /></Field><Field label="Estado"><select style={input} value={active ? "activo" : "inactivo"} onChange={(e) => setActive(e.target.value === "activo")}><option value="activo">Activo</option><option value="inactivo">Inactivo</option></select></Field><Field label="Cantidad"><input style={input} value={qty} onChange={(e) => setQty(e.target.value)} /></Field><Field label="Stock minimo"><input style={input} value={minQty} onChange={(e) => setMinQty(e.target.value)} /></Field><Field label="SKU base"><input style={input} value={skuBase} onChange={(e) => setSkuBase(e.target.value)} /></Field><Field label="Codigo de barras"><input style={input} value={barcode} onChange={(e) => setBarcode(e.target.value)} /></Field><Field label="Tipo de unidad"><input style={input} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="unidad" /></Field><Field label="Tipo de caja"><input style={input} value={boxUnit} onChange={(e) => setBoxUnit(e.target.value)} placeholder="caja" /></Field><Field label="Unidades por caja"><input style={input} value={unitsPerBox} onChange={(e) => setUnitsPerBox(e.target.value)} /></Field><Field label="Peso"><div style={inline} className="inventory-mobile-inline"><input style={input} value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="3.5" /><select style={{ ...input, width: 100 }} value={weightUnit} onChange={(e) => setWeightUnit(e.target.value)}><option value="g">g</option><option value="kg">kg</option><option value="lb">lb</option><option value="ml">ml</option></select></div></Field></div>
           </Card>
 
           <Card title="Variantes">
             <div style={sectionTop}><div><div style={sectionTitle}>Opciones del producto</div><div style={muted}>Configura color, tamano o cualquier otra opcion como peso, tipo de unidad o presentacion.</div></div><button style={btnGhost} onClick={() => setGroups((cur) => [...cur, { id: `custom-${Date.now()}`, name: "Nueva opcion", kind: "custom", values: [], extra: "" }])}>Agregar opcion</button></div>
-            <div style={{ display: "grid", gap: 14 }}>{groups.map((g) => <div key={g.id} style={box}><div style={sectionTop}><div style={{ fontWeight: 700 }}>Nombre de la opcion</div><button style={btnDanger} onClick={() => setGroups((cur) => cur.filter((x) => x.id !== g.id))}>Eliminar</button></div><div style={two}><Field label="Nombre visible"><input style={input} value={g.name} onChange={(e) => patchGroup(g.id, { name: e.target.value })} placeholder="Color, Tamano, Peso..." /></Field><Field label="Tipo"><select style={input} value={g.kind} onChange={(e) => patchGroup(g.id, { kind: e.target.value as OptionKind, values: [] })}><option value="color">Color</option><option value="size">Tamano</option><option value="custom">Personalizada</option></select></Field></div>{presets(g.kind).length ? <div><div style={fieldLabel}>Entradas predefinidas</div><div style={chips}>{presets(g.kind).map((value) => <button key={value} type="button" onClick={() => toggleValue(g.id, value)} style={{ ...chip, ...(g.values.includes(value) ? chipOn : null) }}>{value}</button>)}</div></div> : null}<Field label="Agregar nuevas entradas"><input style={input} value={g.extra} onChange={(e) => patchGroup(g.id, { extra: e.target.value })} placeholder="Separa con coma: 500 ml, 1 L, 5 L" /></Field></div>)}</div>
+            <div style={{ display: "grid", gap: 14 }}>{groups.map((g) => <div key={g.id} style={box}><div style={sectionTop}><div style={{ fontWeight: 700 }}>Nombre de la opcion</div><button style={btnDanger} onClick={() => setGroups((cur) => cur.filter((x) => x.id !== g.id))}>Eliminar</button></div><div style={two} className="inventory-mobile-grid-2"><Field label="Nombre visible"><input style={input} value={g.name} onChange={(e) => patchGroup(g.id, { name: e.target.value })} placeholder="Color, Tamano, Peso..." /></Field><Field label="Tipo"><select style={input} value={g.kind} onChange={(e) => patchGroup(g.id, { kind: e.target.value as OptionKind, values: [] })}><option value="color">Color</option><option value="size">Tamano</option><option value="custom">Personalizada</option></select></Field></div>{presets(g.kind).length ? <div><div style={fieldLabel}>Entradas predefinidas</div><div style={chips}>{presets(g.kind).map((value) => <button key={value} type="button" onClick={() => toggleValue(g.id, value)} style={{ ...chip, ...(g.values.includes(value) ? chipOn : null) }}>{value}</button>)}</div></div> : null}<Field label="Agregar nuevas entradas"><input style={input} value={g.extra} onChange={(e) => patchGroup(g.id, { extra: e.target.value })} placeholder="Separa con coma: 500 ml, 1 L, 5 L" /></Field></div>)}</div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}><button style={btnPrimary} onClick={buildDrafts}>Preparar variantes</button><button style={btnGhost} onClick={() => setDrafts((cur) => [...cur, { key: `manual-${Date.now()}`, name: `${title.trim() || "Producto"} - Variante ${cur.length + 1}`, attrs: {}, sku: slug(`${skuBase || title}-${cur.length + 1}`), barcode, price, cost, qty, min: minQty }])}>Agregar variante manual</button></div>
           </Card>
 
@@ -214,7 +208,7 @@ export default function InventarioPage() {
                       </div>
                       <button style={btnDanger} onClick={() => setDrafts((cur) => cur.filter((_, idx) => idx !== i))}>Quitar</button>
                     </div>
-                    <div style={three}>
+                    <div style={three} className="inventory-mobile-grid-3">
                       <Field label="SKU"><input style={input} value={d.sku} onChange={(e) => setDrafts((cur) => cur.map((x, idx) => idx === i ? { ...x, sku: e.target.value } : x))} /></Field>
                       <Field label="Codigo de barras"><input style={input} value={d.barcode} onChange={(e) => setDrafts((cur) => cur.map((x, idx) => idx === i ? { ...x, barcode: e.target.value } : x))} /></Field>
                       <Field label="Precio"><input style={input} value={d.price} onChange={(e) => setDrafts((cur) => cur.map((x, idx) => idx === i ? { ...x, price: e.target.value } : x))} /></Field>
@@ -226,14 +220,14 @@ export default function InventarioPage() {
                 ))}
               </div>
             )}
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }} className="inventory-mobile-actions">
               <button style={btnPrimary} onClick={save} disabled={saving}>{saving ? "Guardando..." : "Guardar producto"}</button>
               <button style={btnGhost} onClick={resetForm}>Limpiar formulario</button>
             </div>
           </Card>
         </div>
 
-        <aside style={{ display: "grid", gap: 18 }}>
+        <aside style={{ display: "grid", gap: 18 }} className="inventory-mobile-sidebar">
           <Card title="Organizacion del producto">
             <Field label="Tipo"><input style={input} value={productType} onChange={(e) => setProductType(e.target.value)} placeholder="Guantes, Limpieza, Accesorio..." /></Field>
             <Field label="Proveedor"><input style={input} value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Nombre del proveedor" /></Field>
@@ -259,16 +253,12 @@ export default function InventarioPage() {
                       ) : rows.map((v) => {
                         const stockQty = Number(stockMap.get(v.id)?.qty ?? 0);
                         const salePrice = Number(saleMap.get(v.id)?.sale_price ?? 0);
-                        const img = imageFromAttributes(v.attributes);
                         const attrs = visibleAttributes(v.attributes);
                         return (
                           <div key={v.id} style={variantBox}>
-                            <div style={variantTop}>
-                              {img ? <img src={img} alt={v.name} style={thumb} /> : <div style={thumbPlaceholder}>Sin imagen</div>}
-                              <div style={{ display: "grid", gap: 6 }}>
-                                <div style={{ fontWeight: 700 }}>{v.name}</div>
-                                <div style={muted}>{attrs.map(([k, value]) => `${k}: ${value}`).join(" - ") || "Sin atributos"}</div>
-                              </div>
+                            <div style={{ display: "grid", gap: 6 }}>
+                              <div style={{ fontWeight: 700 }}>{v.name}</div>
+                              <div style={muted}>{attrs.map(([k, value]) => `${k}: ${value}`).join(" - ") || "Sin atributos"}</div>
                             </div>
                             <div style={smallStats}><span>Stock {stockQty}</span><span>PVP ${salePrice.toFixed(2)}</span></div>
                           </div>
@@ -301,7 +291,6 @@ const field: CSSProperties = { display: "grid", gap: 6 };
 const fieldLabel: CSSProperties = { color: "#cbd5e1", fontSize: 13, fontWeight: 700 };
 const input: CSSProperties = { width: "100%", minHeight: 46, borderRadius: 14, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(15,23,42,0.72)", color: "#f8fafc", padding: "12px 14px", outline: "none" };
 const editor: CSSProperties = { ...input, minHeight: 170, resize: "vertical" };
-const drop: CSSProperties = { minHeight: 100, borderRadius: 18, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(15,23,42,0.42)", padding: 18, display: "grid", alignContent: "center", justifyItems: "center", color: "#cbd5e1" };
 const two: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 };
 const three: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 };
 const inline: CSSProperties = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10 };
@@ -317,8 +306,5 @@ const btnDanger: CSSProperties = { padding: "10px 14px", borderRadius: 12, borde
 const empty: CSSProperties = { padding: 18, borderRadius: 18, border: "1px dashed rgba(148,163,184,0.22)", color: "#94a3b8", textAlign: "center" };
 const catalog: CSSProperties = { display: "grid", gap: 12, maxHeight: "80vh", overflowY: "auto", paddingRight: 4 };
 const variantBox: CSSProperties = { display: "grid", gap: 6, padding: 10, borderRadius: 14, background: "rgba(15,23,42,0.6)", border: "1px solid rgba(148,163,184,0.1)" };
-const variantTop: CSSProperties = { display: "grid", gridTemplateColumns: "72px minmax(0, 1fr)", gap: 12, alignItems: "start" };
-const thumb: CSSProperties = { width: 72, height: 72, borderRadius: 14, objectFit: "cover", border: "1px solid rgba(148,163,184,0.12)", background: "rgba(15,23,42,0.9)" };
-const thumbPlaceholder: CSSProperties = { width: 72, height: 72, borderRadius: 14, border: "1px dashed rgba(148,163,184,0.22)", display: "grid", placeItems: "center", fontSize: 11, color: "#94a3b8", background: "rgba(15,23,42,0.36)", textAlign: "center", padding: 6 };
 const smallStats: CSSProperties = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "#dbeafe" };
 const muted: CSSProperties = { color: "#94a3b8", fontSize: 12, lineHeight: 1.5 };

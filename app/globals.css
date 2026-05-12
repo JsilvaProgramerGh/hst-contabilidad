@@ -239,3 +239,49 @@ textarea {
     gap: 12px !important;
   }
 }
+
+@media (max-width: 900px) {
+  .inventory-mobile-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .inventory-mobile-sidebar {
+    order: -1;
+  }
+
+  .inventory-mobile-grid-2,
+  .inventory-mobile-grid-3 {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .inventory-mobile-inline {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .inventory-mobile-actions {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .inventory-mobile-actions > * {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .inventory-mobile-page {
+    gap: 14px !important;
+  }
+
+  .inventory-mobile-page h1 {
+    font-size: 28px !important;
+    line-height: 1.1 !important;
+  }
+
+  .inventory-mobile-page input,
+  .inventory-mobile-page select,
+  .inventory-mobile-page textarea,
+  .inventory-mobile-page button {
+    font-size: 16px !important;
+  }
+}

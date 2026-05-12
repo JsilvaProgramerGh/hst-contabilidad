@@ -9,9 +9,10 @@ type Item = {
   description: string;
   unit: string;
   incl_vat: boolean;
+  product_id?: string;
+  product_name?: string;
   variant_id?: string;
   sku?: string;
-  image_url?: string;
 };
 type Customer = {
   id: string;
@@ -33,7 +34,6 @@ type InventoryEntry = {
   description: string | null;
   sale_price: number;
   stock: number;
-  image_url: string | null;
   attributes: Record<string, string>;
 };
 
@@ -72,11 +72,6 @@ function integerValue(value: string | number | null | undefined, fallback = 0) {
   if (String(value ?? "").trim() === "") return fallback;
   const parsed = Number.parseInt(normalizeNumericInput(String(value ?? "").trim()), 10);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function catalogImage(attributes: Record<string, string> | null | undefined) {
-  const value = attributes?.imagen || attributes?.Imagen || attributes?.image_url;
-  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function catalogAttributeSummary(attributes: Record<string, string> | null | undefined) {
@@ -163,9 +158,7 @@ export default function CotizacionPRO() {
   ]);
   const [inventoryCatalog, setInventoryCatalog] = useState<InventoryEntry[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
-  const [inventoryReady, setInventoryReady] = useState(true);
-  const [catalogQuery, setCatalogQuery] = useState("");
-  const [catalogLineIndex, setCatalogLineIndex] = useState<number | null>(null);
+  const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
 
   // historial
   const [list, setList] = useState<any[]>([]);
@@ -272,26 +265,58 @@ export default function CotizacionPRO() {
     return { lines, subtotal, iva, disc, neto, del, totalFinal, paidVal, saldo };
   }, [items, ivaRate, discount, delivery, paid]);
 
-  const filteredCatalog = useMemo(() => {
-    const value = catalogQuery.trim().toLowerCase();
-    if (!value) return inventoryCatalog.slice(0, 18);
-    return inventoryCatalog
-      .filter((entry) =>
+  const productCatalog = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        product_id: string;
+        product_name: string;
+        product_sku: string | null;
+        category_name: string | null;
+        description: string | null;
+        variants: InventoryEntry[];
+      }
+    >();
+
+    inventoryCatalog.forEach((entry) => {
+      const existing = grouped.get(entry.product_id);
+      if (existing) {
+        existing.variants.push(entry);
+        return;
+      }
+
+      grouped.set(entry.product_id, {
+        product_id: entry.product_id,
+        product_name: entry.product_name,
+        product_sku: entry.product_sku,
+        category_name: entry.category_name,
+        description: entry.description,
+        variants: [entry],
+      });
+    });
+
+    return Array.from(grouped.values());
+  }, [inventoryCatalog]);
+
+  const searchProducts = (query: string) => {
+    const value = query.trim().toLowerCase();
+    if (!value) return [];
+    return productCatalog
+      .filter((product) =>
         [
-          entry.product_name,
-          entry.variant_name,
-          entry.product_sku,
-          entry.category_name,
-          entry.description,
-          catalogAttributeSummary(entry.attributes),
+          product.product_name,
+          product.product_sku,
+          product.category_name,
+          product.description,
+          ...product.variants.map((variant) => `${variant.variant_name} ${catalogAttributeSummary(variant.attributes)}`),
         ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase()
           .includes(value),
       )
-      .slice(0, 24);
-  }, [catalogQuery, inventoryCatalog]);
+      .slice(0, 8);
+  };
 
   const loadInventoryCatalog = async () => {
     if (inventoryLoading) return;
@@ -329,41 +354,118 @@ export default function CotizacionPRO() {
             description: product.description,
             sale_price: Number(saleMap.get(variant.id) ?? 0),
             stock: Number(stockMap.get(variant.id) ?? 0),
-            image_url: catalogImage(attributes),
             attributes,
           };
         })
         .filter((entry): entry is InventoryEntry => Boolean(entry));
 
       setInventoryCatalog(nextCatalog);
-      setInventoryReady(true);
     } catch {
-      setInventoryReady(false);
       setInventoryCatalog([]);
     } finally {
       setInventoryLoading(false);
     }
   };
 
-  const openCatalogForLine = async (idx: number) => {
-    setCatalogLineIndex(idx);
+  const focusLine = async (idx: number) => {
+    setActiveLineIndex(idx);
     if (!inventoryCatalog.length) {
       await loadInventoryCatalog();
     }
   };
 
-  const applyCatalogToLine = (entry: InventoryEntry) => {
-    if (catalogLineIndex == null) return;
-    updateItem(catalogLineIndex, {
+  const applyProductToLine = (idx: number, product: (typeof productCatalog)[number]) => {
+    updateItem(idx, {
+      description: product.product_name,
+      product_id: product.product_id,
+      product_name: product.product_name,
+      variant_id: undefined,
+      sku: product.product_sku || undefined,
+      unit: "",
+      incl_vat: true,
+    });
+
+    if (product.variants.length === 1) {
+      applyVariantToLine(idx, product.variants[0]);
+    }
+  };
+
+  const applyVariantToLine = (idx: number, entry: InventoryEntry) => {
+    updateItem(idx, {
       description: entry.variant_name,
+      product_id: entry.product_id,
+      product_name: entry.product_name,
       unit: entry.sale_price ? entry.sale_price.toFixed(2) : "",
       incl_vat: true,
       variant_id: entry.variant_id,
       sku: entry.product_sku || undefined,
-      image_url: entry.image_url || undefined,
     });
-    setCatalogLineIndex(null);
-    setCatalogQuery("");
+    setActiveLineIndex(idx);
+  };
+
+  const selectedProductForLine = (idx: number) =>
+    items[idx]?.product_id
+      ? productCatalog.find((product) => product.product_id === items[idx].product_id) || null
+      : null;
+
+  const productSuggestionsForLine = (idx: number) => {
+    const value = items[idx]?.description || "";
+    return searchProducts(value);
+  };
+
+  const renderCatalogAssist = (idx: number) => {
+    const suggestions = productSuggestionsForLine(idx);
+    const selectedProduct = selectedProductForLine(idx);
+
+    return (
+      <div style={{ display: "grid", gap: 8 }}>
+        {activeLineIndex === idx && items[idx].description.trim() && suggestions.length > 0 ? (
+          <div style={suggestionBox}>
+            {suggestions.map((product) => (
+              <button
+                key={product.product_id}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => applyProductToLine(idx, product)}
+                style={suggestionRow}
+              >
+                <div style={{ fontWeight: 800, color: "#f8fafc" }}>{product.product_name}</div>
+                <div style={suggestionMeta}>
+                  {[product.category_name, product.product_sku, `${product.variants.length} variante${product.variants.length === 1 ? "" : "s"}`]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {selectedProduct?.variants.length && selectedProduct.variants.length > 1 ? (
+          <select
+            style={input()}
+            value={items[idx].variant_id || ""}
+            onChange={(e) => {
+              const variant = selectedProduct.variants.find((entry) => entry.variant_id === e.target.value);
+              if (variant) applyVariantToLine(idx, variant);
+            }}
+          >
+            <option value="">Selecciona una variante</option>
+            {selectedProduct.variants.map((variant) => (
+              <option key={variant.variant_id} value={variant.variant_id}>
+                {variant.variant_name} - ${money(variant.sale_price)} - Stock {variant.stock}
+              </option>
+            ))}
+          </select>
+        ) : null}
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {items[idx].sku ? <span style={{ color: "#94a3b8", fontSize: 12 }}>SKU {items[idx].sku}</span> : null}
+          {items[idx].product_name && !items[idx].variant_id ? (
+            <span style={{ color: "#f0c36b", fontSize: 12 }}>Falta elegir variante</span>
+          ) : null}
+        </div>
+      </div>
+    );
   };
 
   const exportingRef = useRef(false);
@@ -855,7 +957,23 @@ export default function CotizacionPRO() {
 
   const removeItem = (idx: number) => setItems((p) => p.filter((_, i) => i !== idx));
   const updateItem = (idx: number, patch: Partial<Item>) =>
-    setItems((p) => p.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+    setItems((p) =>
+      p.map((it, i) => {
+        if (i !== idx) return it;
+        const next = { ...it, ...patch };
+        if (Object.prototype.hasOwnProperty.call(patch, "description")) {
+          const nextDescription = String(patch.description ?? "");
+          const currentSelected = it.variant_id ? it.description : it.product_name || it.description;
+          if (nextDescription !== currentSelected) {
+            next.product_id = undefined;
+            next.product_name = undefined;
+            next.variant_id = undefined;
+            next.sku = undefined;
+          }
+        }
+        return next;
+      }),
+    );
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -1321,72 +1439,6 @@ export default function CotizacionPRO() {
               </button>
             </div>
 
-            {catalogLineIndex !== null ? (
-              <div style={{ ...card(), marginBottom: 14, padding: 14, background: "rgba(8, 14, 24, 0.88)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <div>
-                    <div style={{ fontWeight: 900 }}>Elegir producto del inventario</div>
-                    <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>
-                      Llenaremos la descripcion y el precio de la linea {catalogLineIndex + 1}.
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => setCatalogLineIndex(null)} style={btn()}>
-                    Cerrar
-                  </button>
-                </div>
-
-                <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                  <input
-                    style={input()}
-                    value={catalogQuery}
-                    onChange={(e) => setCatalogQuery(e.target.value)}
-                    placeholder="Busca por nombre, variante, categoria o SKU"
-                  />
-                  {!inventoryReady ? (
-                    <div style={{ color: "#f0c36b", fontSize: 12 }}>
-                      No pude leer el inventario ahora mismo.
-                    </div>
-                  ) : null}
-                  {inventoryLoading ? (
-                    <div style={{ color: "#94a3b8", fontSize: 12 }}>Cargando catalogo...</div>
-                  ) : (
-                    <div style={catalogGrid}>
-                      {filteredCatalog.map((entry) => (
-                        <button
-                          key={entry.variant_id}
-                          type="button"
-                          onClick={() => applyCatalogToLine(entry)}
-                          style={catalogBtn}
-                        >
-                          {entry.image_url ? (
-                            <img src={entry.image_url} alt={entry.variant_name} style={catalogThumb} />
-                          ) : (
-                            <div style={catalogThumbPlaceholder}>Sin imagen</div>
-                          )}
-                          <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
-                            <div style={{ fontWeight: 800, color: "#f8fafc" }}>{entry.variant_name}</div>
-                            <div style={{ color: "#94a3b8", fontSize: 12 }}>
-                              {[entry.category_name, entry.product_sku].filter(Boolean).join(" · ")}
-                            </div>
-                            <div style={{ color: "#cbd5e1", fontSize: 12 }}>
-                              {catalogAttributeSummary(entry.attributes) || entry.description || "Producto del catalogo"}
-                            </div>
-                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", color: "#bfdbfe", fontSize: 12 }}>
-                              <span>Stock {entry.stock}</span>
-                              <span>PVP $ {money(entry.sale_price)}</span>
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                      {!filteredCatalog.length ? (
-                        <div style={catalogEmpty}>No encontre variantes con esa busqueda.</div>
-                      ) : null}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : null}
-
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }} className="mobile-quotes-desktop-table">
                 <thead>
@@ -1419,15 +1471,11 @@ export default function CotizacionPRO() {
                           <input
                             style={input()}
                             value={items[idx].description}
+                            onFocus={() => focusLine(idx)}
                             onChange={(e) => updateItem(idx, { description: e.target.value })}
                             placeholder="Ej. Caja de guantes de nitrilo"
                           />
-                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                            <button type="button" onClick={() => openCatalogForLine(idx)} style={btn()}>
-                              Elegir del inventario
-                            </button>
-                            {items[idx].sku ? <span style={{ color: "#94a3b8", fontSize: 12 }}>SKU {items[idx].sku}</span> : null}
-                          </div>
+                          {renderCatalogAssist(idx)}
                         </div>
                       </Td>
 
@@ -1492,15 +1540,11 @@ export default function CotizacionPRO() {
                         <input
                           style={input()}
                           value={items[idx].description}
+                          onFocus={() => focusLine(idx)}
                           onChange={(e) => updateItem(idx, { description: e.target.value })}
                           placeholder="Ej. Caja de guantes de nitrilo"
                         />
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                          <button type="button" onClick={() => openCatalogForLine(idx)} style={btn()}>
-                            Elegir del inventario
-                          </button>
-                          {items[idx].sku ? <span style={{ color: "#94a3b8", fontSize: 12 }}>SKU {items[idx].sku}</span> : null}
-                        </div>
+                        <div style={{ marginTop: 8 }}>{renderCatalogAssist(idx)}</div>
                       </div>
 
                       <div>
@@ -1718,57 +1762,31 @@ function mobileCard(): React.CSSProperties {
   };
 }
 
-const catalogGrid: React.CSSProperties = {
+const suggestionBox: React.CSSProperties = {
   display: "grid",
-  gap: 10,
-  maxHeight: 360,
+  gap: 6,
+  padding: 8,
+  borderRadius: 14,
+  border: "1px solid rgba(148, 163, 184, 0.14)",
+  background: "rgba(8, 14, 24, 0.96)",
+  maxHeight: 240,
   overflowY: "auto",
-  paddingRight: 4,
 };
 
-const catalogBtn: React.CSSProperties = {
+const suggestionRow: React.CSSProperties = {
   width: "100%",
-  display: "grid",
-  gridTemplateColumns: "72px minmax(0, 1fr)",
-  gap: 12,
   textAlign: "left",
-  alignItems: "start",
-  padding: 12,
-  borderRadius: 16,
-  border: "1px solid rgba(148, 163, 184, 0.14)",
+  padding: "10px 12px",
+  borderRadius: 12,
+  border: "1px solid rgba(148, 163, 184, 0.12)",
   background: "rgba(15, 23, 37, 0.82)",
   cursor: "pointer",
 };
 
-const catalogThumb: React.CSSProperties = {
-  width: 72,
-  height: 72,
-  borderRadius: 14,
-  objectFit: "cover",
-  border: "1px solid rgba(148, 163, 184, 0.16)",
-  background: "rgba(8, 14, 24, 0.95)",
-};
-
-const catalogThumbPlaceholder: React.CSSProperties = {
-  width: 72,
-  height: 72,
-  borderRadius: 14,
-  display: "grid",
-  placeItems: "center",
-  textAlign: "center",
-  padding: 6,
+const suggestionMeta: React.CSSProperties = {
   color: "#94a3b8",
-  fontSize: 11,
-  border: "1px dashed rgba(148, 163, 184, 0.2)",
-  background: "rgba(8, 14, 24, 0.78)",
-};
-
-const catalogEmpty: React.CSSProperties = {
-  padding: 14,
-  borderRadius: 14,
-  border: "1px dashed rgba(148, 163, 184, 0.18)",
-  color: "#94a3b8",
-  textAlign: "center",
+  fontSize: 12,
+  marginTop: 4,
 };
 
 function mobileLinkBtn(): React.CSSProperties {
