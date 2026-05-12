@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 const navItems = [
@@ -10,52 +11,64 @@ const navItems = [
 
 export default function InventarioLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setIsMobile(window.innerWidth <= 900);
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
 
   return (
     <div style={shell} className="inventory-shell">
-      <aside style={sidebar} className="inventory-sidebar-panel">
-        <div style={brandCard}>
-          <div style={eyebrow}>HST Suite</div>
-          <div style={brandTitle}>Inventario</div>
-          <p style={brandCopy}>Una sola vista para registrar productos, variantes y consultar tu catalogo sin saltar entre modulos.</p>
-        </div>
+      {!isMobile ? (
+        <aside style={sidebar} className="inventory-sidebar-panel">
+          <div style={brandCard}>
+            <div style={eyebrow}>HST Suite</div>
+            <div style={brandTitle}>Inventario</div>
+            <p style={brandCopy}>Una sola vista para registrar productos, variantes y consultar tu catalogo sin saltar entre modulos.</p>
+          </div>
 
-        <nav style={nav}>
-          {navItems.map((item) => {
-            const active = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                style={{
-                  ...navLink,
-                  ...(active ? navLinkActive : null),
-                }}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
+          <nav style={nav}>
+            {navItems.map((item) => {
+              const active = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  style={{
+                    ...navLink,
+                    ...(active ? navLinkActive : null),
+                  }}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
 
-        <div style={sideFooter}>
-          <Link href="/" style={backLink}>
-            Volver a contabilidad
-          </Link>
-          <p style={footerCopy}>Diseno actualizado para trabajar mejor en desktop y movil.</p>
-        </div>
-      </aside>
+          <div style={sideFooter}>
+            <Link href="/" style={backLink}>
+              Volver a contabilidad
+            </Link>
+            <p style={footerCopy}>Diseno actualizado para trabajar mejor en desktop y movil.</p>
+          </div>
+        </aside>
+      ) : null}
 
       <div style={mainColumn}>
-        <header style={mobileHeader} className="inventory-mobile-header">
-          <div>
-            <div style={mobileEyebrow}>HST</div>
-            <div style={mobileTitle}>Inventario</div>
-          </div>
-          <Link href="/" style={mobileBack}>
-            Contabilidad
-          </Link>
-        </header>
+        {isMobile ? (
+          <header style={mobileHeader} className="inventory-mobile-header">
+            <div>
+              <div style={mobileEyebrow}>HST</div>
+              <div style={mobileTitle}>Inventario</div>
+            </div>
+            <Link href="/" style={mobileBack}>
+              Contabilidad
+            </Link>
+          </header>
+        ) : null}
 
         <main style={content}>{children}</main>
       </div>
