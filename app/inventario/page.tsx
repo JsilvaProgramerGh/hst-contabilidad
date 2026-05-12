@@ -27,6 +27,18 @@ const slug = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").r
 const csv = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
 const presets = (k: OptionKind) => (k === "color" ? colors : k === "size" ? sizes : []);
 
+function imageFromAttributes(attributes: Record<string, string> | null | undefined) {
+  const value = attributes?.imagen || attributes?.Imagen || attributes?.image_url;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function visibleAttributes(attributes: Record<string, string> | null | undefined) {
+  return Object.entries(attributes || {}).filter(([key, value]) => {
+    if (!value) return false;
+    return !["imagen", "Imagen", "image_url", "producto_origen_id", "variante_origen_id"].includes(key);
+  });
+}
+
 function combos(groups: Array<{ name: string; values: string[] }>) {
   if (!groups.length) return [{} as Record<string, string>];
   return groups.reduce<Array<Record<string, string>>>((acc, g) => acc.flatMap((b) => g.values.map((v) => ({ ...b, [g.name]: v }))), [{}]);
@@ -247,11 +259,16 @@ export default function InventarioPage() {
                       ) : rows.map((v) => {
                         const stockQty = Number(stockMap.get(v.id)?.qty ?? 0);
                         const salePrice = Number(saleMap.get(v.id)?.sale_price ?? 0);
+                        const img = imageFromAttributes(v.attributes);
+                        const attrs = visibleAttributes(v.attributes);
                         return (
                           <div key={v.id} style={variantBox}>
-                            <div>
-                              <div style={{ fontWeight: 700 }}>{v.name}</div>
-                              <div style={muted}>{Object.entries(v.attributes || {}).map(([k, value]) => `${k}: ${value}`).join(" - ") || "Sin atributos"}</div>
+                            <div style={variantTop}>
+                              {img ? <img src={img} alt={v.name} style={thumb} /> : <div style={thumbPlaceholder}>Sin imagen</div>}
+                              <div style={{ display: "grid", gap: 6 }}>
+                                <div style={{ fontWeight: 700 }}>{v.name}</div>
+                                <div style={muted}>{attrs.map(([k, value]) => `${k}: ${value}`).join(" - ") || "Sin atributos"}</div>
+                              </div>
                             </div>
                             <div style={smallStats}><span>Stock {stockQty}</span><span>PVP ${salePrice.toFixed(2)}</span></div>
                           </div>
@@ -300,5 +317,8 @@ const btnDanger: CSSProperties = { padding: "10px 14px", borderRadius: 12, borde
 const empty: CSSProperties = { padding: 18, borderRadius: 18, border: "1px dashed rgba(148,163,184,0.22)", color: "#94a3b8", textAlign: "center" };
 const catalog: CSSProperties = { display: "grid", gap: 12, maxHeight: "80vh", overflowY: "auto", paddingRight: 4 };
 const variantBox: CSSProperties = { display: "grid", gap: 6, padding: 10, borderRadius: 14, background: "rgba(15,23,42,0.6)", border: "1px solid rgba(148,163,184,0.1)" };
+const variantTop: CSSProperties = { display: "grid", gridTemplateColumns: "72px minmax(0, 1fr)", gap: 12, alignItems: "start" };
+const thumb: CSSProperties = { width: 72, height: 72, borderRadius: 14, objectFit: "cover", border: "1px solid rgba(148,163,184,0.12)", background: "rgba(15,23,42,0.9)" };
+const thumbPlaceholder: CSSProperties = { width: 72, height: 72, borderRadius: 14, border: "1px dashed rgba(148,163,184,0.22)", display: "grid", placeItems: "center", fontSize: 11, color: "#94a3b8", background: "rgba(15,23,42,0.36)", textAlign: "center", padding: 6 };
 const smallStats: CSSProperties = { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "#dbeafe" };
 const muted: CSSProperties = { color: "#94a3b8", fontSize: 12, lineHeight: 1.5 };

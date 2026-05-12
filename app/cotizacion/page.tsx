@@ -4,7 +4,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabaseBrowser } from "@/lib/supabase-browser";
-type Item = { qty: string; description: string; unit: string; incl_vat: boolean };
+type Item = {
+  qty: string;
+  description: string;
+  unit: string;
+  incl_vat: boolean;
+  variant_id?: string;
+  sku?: string;
+  image_url?: string;
+};
 type Customer = {
   id: string;
   document_type: string | null;
@@ -14,6 +22,19 @@ type Customer = {
   email: string | null;
   phone: string | null;
   address: string | null;
+};
+type InventoryEntry = {
+  variant_id: string;
+  product_id: string;
+  product_name: string;
+  variant_name: string;
+  product_sku: string | null;
+  category_name: string | null;
+  description: string | null;
+  sale_price: number;
+  stock: number;
+  image_url: string | null;
+  attributes: Record<string, string>;
 };
 
 const IVA_DEFAULT = 0.15;
@@ -51,6 +72,18 @@ function integerValue(value: string | number | null | undefined, fallback = 0) {
   if (String(value ?? "").trim() === "") return fallback;
   const parsed = Number.parseInt(normalizeNumericInput(String(value ?? "").trim()), 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function catalogImage(attributes: Record<string, string> | null | undefined) {
+  const value = attributes?.imagen || attributes?.Imagen || attributes?.image_url;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function catalogAttributeSummary(attributes: Record<string, string> | null | undefined) {
+  return Object.entries(attributes || {})
+    .filter(([key, value]) => value && !["imagen", "Imagen", "image_url", "producto_origen_id", "variante_origen_id", "slug_web"].includes(key))
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" · ");
 }
 
 function inferDocumentType(value: string) {
@@ -128,6 +161,11 @@ export default function CotizacionPRO() {
   const [items, setItems] = useState<Item[]>([
     { qty: "1", description: "", unit: "", incl_vat: true },
   ]);
+  const [inventoryCatalog, setInventoryCatalog] = useState<InventoryEntry[]>([]);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryReady, setInventoryReady] = useState(true);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogLineIndex, setCatalogLineIndex] = useState<number | null>(null);
 
   // historial
   const [list, setList] = useState<any[]>([]);
@@ -233,6 +271,100 @@ export default function CotizacionPRO() {
 
     return { lines, subtotal, iva, disc, neto, del, totalFinal, paidVal, saldo };
   }, [items, ivaRate, discount, delivery, paid]);
+
+  const filteredCatalog = useMemo(() => {
+    const value = catalogQuery.trim().toLowerCase();
+    if (!value) return inventoryCatalog.slice(0, 18);
+    return inventoryCatalog
+      .filter((entry) =>
+        [
+          entry.product_name,
+          entry.variant_name,
+          entry.product_sku,
+          entry.category_name,
+          entry.description,
+          catalogAttributeSummary(entry.attributes),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(value),
+      )
+      .slice(0, 24);
+  }, [catalogQuery, inventoryCatalog]);
+
+  const loadInventoryCatalog = async () => {
+    if (inventoryLoading) return;
+    setInventoryLoading(true);
+    try {
+      const sb = supabaseBrowser();
+      const [productsRes, variantsRes, salesRes, stockRes, categoriesRes] = await Promise.all([
+        sb.from("inv_products").select("id,name,sku,description,category_id,active").eq("active", true).order("name"),
+        sb.from("inv_variants").select("id,product_id,name,attributes,active").eq("active", true).order("name"),
+        sb.from("inv_variant_sales").select("variant_id,sale_price"),
+        sb.from("inv_variant_stock").select("variant_id,qty"),
+        sb.from("inv_categories").select("id,name"),
+      ]);
+
+      const firstError = [productsRes.error, variantsRes.error, salesRes.error, stockRes.error, categoriesRes.error].find(Boolean);
+      if (firstError) throw firstError;
+
+      const productMap = new Map((productsRes.data || []).map((row) => [row.id, row]));
+      const saleMap = new Map((salesRes.data || []).map((row) => [row.variant_id, Number(row.sale_price || 0)]));
+      const stockMap = new Map((stockRes.data || []).map((row) => [row.variant_id, Number(row.qty || 0)]));
+      const categoryMap = new Map((categoriesRes.data || []).map((row) => [row.id, row.name]));
+
+      const nextCatalog: InventoryEntry[] = (variantsRes.data || [])
+        .map((variant) => {
+          const product = productMap.get(variant.product_id);
+          if (!product) return null;
+          const attributes = (variant.attributes || {}) as Record<string, string>;
+          return {
+            variant_id: variant.id,
+            product_id: product.id,
+            product_name: product.name,
+            variant_name: variant.name,
+            product_sku: product.sku,
+            category_name: product.category_id ? (categoryMap.get(product.category_id) ?? null) : null,
+            description: product.description,
+            sale_price: Number(saleMap.get(variant.id) ?? 0),
+            stock: Number(stockMap.get(variant.id) ?? 0),
+            image_url: catalogImage(attributes),
+            attributes,
+          };
+        })
+        .filter((entry): entry is InventoryEntry => Boolean(entry));
+
+      setInventoryCatalog(nextCatalog);
+      setInventoryReady(true);
+    } catch {
+      setInventoryReady(false);
+      setInventoryCatalog([]);
+    } finally {
+      setInventoryLoading(false);
+    }
+  };
+
+  const openCatalogForLine = async (idx: number) => {
+    setCatalogLineIndex(idx);
+    if (!inventoryCatalog.length) {
+      await loadInventoryCatalog();
+    }
+  };
+
+  const applyCatalogToLine = (entry: InventoryEntry) => {
+    if (catalogLineIndex == null) return;
+    updateItem(catalogLineIndex, {
+      description: entry.variant_name,
+      unit: entry.sale_price ? entry.sale_price.toFixed(2) : "",
+      incl_vat: true,
+      variant_id: entry.variant_id,
+      sku: entry.product_sku || undefined,
+      image_url: entry.image_url || undefined,
+    });
+    setCatalogLineIndex(null);
+    setCatalogQuery("");
+  };
 
   const exportingRef = useRef(false);
 
@@ -1189,6 +1321,72 @@ export default function CotizacionPRO() {
               </button>
             </div>
 
+            {catalogLineIndex !== null ? (
+              <div style={{ ...card(), marginBottom: 14, padding: 14, background: "rgba(8, 14, 24, 0.88)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontWeight: 900 }}>Elegir producto del inventario</div>
+                    <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>
+                      Llenaremos la descripcion y el precio de la linea {catalogLineIndex + 1}.
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setCatalogLineIndex(null)} style={btn()}>
+                    Cerrar
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                  <input
+                    style={input()}
+                    value={catalogQuery}
+                    onChange={(e) => setCatalogQuery(e.target.value)}
+                    placeholder="Busca por nombre, variante, categoria o SKU"
+                  />
+                  {!inventoryReady ? (
+                    <div style={{ color: "#f0c36b", fontSize: 12 }}>
+                      No pude leer el inventario ahora mismo.
+                    </div>
+                  ) : null}
+                  {inventoryLoading ? (
+                    <div style={{ color: "#94a3b8", fontSize: 12 }}>Cargando catalogo...</div>
+                  ) : (
+                    <div style={catalogGrid}>
+                      {filteredCatalog.map((entry) => (
+                        <button
+                          key={entry.variant_id}
+                          type="button"
+                          onClick={() => applyCatalogToLine(entry)}
+                          style={catalogBtn}
+                        >
+                          {entry.image_url ? (
+                            <img src={entry.image_url} alt={entry.variant_name} style={catalogThumb} />
+                          ) : (
+                            <div style={catalogThumbPlaceholder}>Sin imagen</div>
+                          )}
+                          <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, color: "#f8fafc" }}>{entry.variant_name}</div>
+                            <div style={{ color: "#94a3b8", fontSize: 12 }}>
+                              {[entry.category_name, entry.product_sku].filter(Boolean).join(" · ")}
+                            </div>
+                            <div style={{ color: "#cbd5e1", fontSize: 12 }}>
+                              {catalogAttributeSummary(entry.attributes) || entry.description || "Producto del catalogo"}
+                            </div>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", color: "#bfdbfe", fontSize: 12 }}>
+                              <span>Stock {entry.stock}</span>
+                              <span>PVP $ {money(entry.sale_price)}</span>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                      {!filteredCatalog.length ? (
+                        <div style={catalogEmpty}>No encontre variantes con esa busqueda.</div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }} className="mobile-quotes-desktop-table">
                 <thead>
@@ -1217,12 +1415,20 @@ export default function CotizacionPRO() {
                       </Td>
 
                       <Td>
-                        <input
-                          style={input()}
-                          value={items[idx].description}
-                          onChange={(e) => updateItem(idx, { description: e.target.value })}
-                          placeholder="Ej. Caja de guantes de nitrilo"
-                        />
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <input
+                            style={input()}
+                            value={items[idx].description}
+                            onChange={(e) => updateItem(idx, { description: e.target.value })}
+                            placeholder="Ej. Caja de guantes de nitrilo"
+                          />
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <button type="button" onClick={() => openCatalogForLine(idx)} style={btn()}>
+                              Elegir del inventario
+                            </button>
+                            {items[idx].sku ? <span style={{ color: "#94a3b8", fontSize: 12 }}>SKU {items[idx].sku}</span> : null}
+                          </div>
+                        </div>
                       </Td>
 
                       <Td>
@@ -1289,6 +1495,12 @@ export default function CotizacionPRO() {
                           onChange={(e) => updateItem(idx, { description: e.target.value })}
                           placeholder="Ej. Caja de guantes de nitrilo"
                         />
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                          <button type="button" onClick={() => openCatalogForLine(idx)} style={btn()}>
+                            Elegir del inventario
+                          </button>
+                          {items[idx].sku ? <span style={{ color: "#94a3b8", fontSize: 12 }}>SKU {items[idx].sku}</span> : null}
+                        </div>
                       </div>
 
                       <div>
@@ -1505,6 +1717,59 @@ function mobileCard(): React.CSSProperties {
     gap: 12,
   };
 }
+
+const catalogGrid: React.CSSProperties = {
+  display: "grid",
+  gap: 10,
+  maxHeight: 360,
+  overflowY: "auto",
+  paddingRight: 4,
+};
+
+const catalogBtn: React.CSSProperties = {
+  width: "100%",
+  display: "grid",
+  gridTemplateColumns: "72px minmax(0, 1fr)",
+  gap: 12,
+  textAlign: "left",
+  alignItems: "start",
+  padding: 12,
+  borderRadius: 16,
+  border: "1px solid rgba(148, 163, 184, 0.14)",
+  background: "rgba(15, 23, 37, 0.82)",
+  cursor: "pointer",
+};
+
+const catalogThumb: React.CSSProperties = {
+  width: 72,
+  height: 72,
+  borderRadius: 14,
+  objectFit: "cover",
+  border: "1px solid rgba(148, 163, 184, 0.16)",
+  background: "rgba(8, 14, 24, 0.95)",
+};
+
+const catalogThumbPlaceholder: React.CSSProperties = {
+  width: 72,
+  height: 72,
+  borderRadius: 14,
+  display: "grid",
+  placeItems: "center",
+  textAlign: "center",
+  padding: 6,
+  color: "#94a3b8",
+  fontSize: 11,
+  border: "1px dashed rgba(148, 163, 184, 0.2)",
+  background: "rgba(8, 14, 24, 0.78)",
+};
+
+const catalogEmpty: React.CSSProperties = {
+  padding: 14,
+  borderRadius: 14,
+  border: "1px dashed rgba(148, 163, 184, 0.18)",
+  color: "#94a3b8",
+  textAlign: "center",
+};
 
 function mobileLinkBtn(): React.CSSProperties {
   return {
