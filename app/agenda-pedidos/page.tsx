@@ -187,6 +187,7 @@ export default function AgendaPedidosPage() {
   const [routeDate, setRouteDate] = useState(today);
   const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [manualRouteIds, setManualRouteIds] = useState<string[]>([]);
 
   async function loadOrders() {
     setLoading(true);
@@ -236,6 +237,23 @@ export default function AgendaPedidosPage() {
   const routeOrders = useMemo(() => {
     return orderRouteByLocation(dailyOrders, geo);
   }, [dailyOrders, geo]);
+
+  useEffect(() => {
+    setManualRouteIds((prev) => {
+      const ids = routeOrders.map((row) => row.id);
+      const kept = prev.filter((id) => ids.includes(id));
+      const missing = ids.filter((id) => !kept.includes(id));
+      return [...kept, ...missing];
+    });
+  }, [routeOrders]);
+
+  const orderedForDisplay = useMemo(() => {
+    if (!manualRouteIds.length) return routeOrders;
+    const map = new Map(routeOrders.map((row) => [row.id, row]));
+    const arranged = manualRouteIds.map((id) => map.get(id)).filter((row): row is DeliveryOrder => Boolean(row));
+    const missing = routeOrders.filter((row) => !manualRouteIds.includes(row.id));
+    return [...arranged, ...missing];
+  }, [routeOrders, manualRouteIds]);
 
   const deliveredToday = dailyOrders.filter((row) => row.status === "ENTREGADO").length;
   const pendingToday = dailyOrders.filter((row) => row.status === "PENDIENTE" || row.status === "EN_RUTA").length;
@@ -451,15 +469,33 @@ export default function AgendaPedidosPage() {
   }
 
   async function saveRouteOrder() {
-    if (!routeOrders.length) return;
-    for (let index = 0; index < routeOrders.length; index += 1) {
+    if (!orderedForDisplay.length) return;
+    for (let index = 0; index < orderedForDisplay.length; index += 1) {
       await supabase
         .from("delivery_orders")
         .update({ route_position: index + 1 })
-        .eq("id", routeOrders[index].id);
+        .eq("id", orderedForDisplay[index].id);
     }
     await loadOrders();
     setStatus("Ruta guardada para el dia.");
+  }
+
+  function moveStop(id: string, direction: "up" | "down") {
+    setManualRouteIds((prev) => {
+      const next = prev.length ? [...prev] : routeOrders.map((row) => row.id);
+      const index = next.indexOf(id);
+      if (index === -1) return next;
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (target < 0 || target >= next.length) return next;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+    setStatus("Orden manual listo. Guarda el orden cuando termines.");
+  }
+
+  function resetAutomaticOrder() {
+    setManualRouteIds(routeOrders.map((row) => row.id));
+    setStatus("Orden automatico restaurado para este dia.");
   }
 
 function isMobileDevice() {
@@ -505,7 +541,7 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
     const routeWindow = isMobileDevice() ? null : window.open("", "_blank");
 
     const startRoute = (location: { lat: number; lng: number } | null) => {
-      const orderedStops = orderRouteByLocation(dailyOrders, location);
+      const orderedStops = orderedForDisplay.length ? orderedForDisplay : orderRouteByLocation(dailyOrders, location);
       if (location) {
         setGeo(location);
         setStatus("Ruta abierta desde tu ubicacion actual. Puedes elegir el modo de viaje en Maps.");
@@ -582,10 +618,10 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
             <Field label="Telefono">
               <input style={input} value={form.phone} onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))} placeholder="098..." />
             </Field>
-            <Field label="Hora de entrega">
+            <Field label="Hora de entrega (opcional)">
               <input
                 type="time"
-                style={input}
+                  style={input}
                 value={form.time_window}
                 onChange={(e) => setForm((prev) => ({ ...prev, time_window: e.target.value }))}
               />
@@ -697,6 +733,7 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
               Completar coordenadas
             </button>
             <button type="button" style={secondaryButton} onClick={saveRouteOrder} disabled={!routeOrders.length || !tableReady}>Guardar orden de ruta</button>
+            <button type="button" style={secondaryButton} onClick={resetAutomaticOrder} disabled={!routeOrders.length}>Usar orden automatico</button>
             <button type="button" style={secondaryButton} onClick={openGoogleMapsRoute} disabled={!routeOrders.length}>Abrir ruta en Maps</button>
           </div>
 
@@ -715,7 +752,7 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
             {dailyOrders.length === 0 ? (
               <div style={emptyState}>No hay pedidos para esta fecha.</div>
             ) : (
-              routeOrders.map((row, index) => (
+              orderedForDisplay.map((row, index) => (
                 <div key={row.id} style={listRow} className="mobile-agenda-list-row">
                   <div style={{ minWidth: 0 }}>
                     <div style={routeBadge}>Parada {index + 1}</div>
@@ -730,6 +767,8 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
                   </div>
 
                   <div style={rowActions} className="mobile-agenda-row-actions">
+                    <button type="button" style={secondaryButton} onClick={() => moveStop(row.id, "up")} disabled={index === 0}>Subir</button>
+                    <button type="button" style={secondaryButton} onClick={() => moveStop(row.id, "down")} disabled={index === orderedForDisplay.length - 1}>Bajar</button>
                     <button type="button" style={secondaryButton} onClick={() => editOrder(row)}>Editar</button>
                     {row.status !== "EN_RUTA" ? <button type="button" style={secondaryButton} onClick={() => updateStatus(row.id, "EN_RUTA")}>En ruta</button> : null}
                     {row.status !== "ENTREGADO" ? <button type="button" style={primaryButtonMini} onClick={() => updateStatus(row.id, "ENTREGADO")}>Entregado</button> : null}

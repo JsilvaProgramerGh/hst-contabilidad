@@ -1673,8 +1673,10 @@ export default function CotizacionPRO() {
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }} className="mobile-quotes-action-grid">
                 <div style={{ gridColumn: "1 / -1", display: "grid", gap: 10, padding: 12, borderRadius: 16, border: "1px solid rgba(148, 163, 184, 0.12)", background: "rgba(8, 14, 24, 0.7)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                    <div style={{ fontWeight: 900, color: "#f8fafc" }}>Configuracion del recibo</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    <div style={{ fontWeight: 900, color: "#f8fafc" }}>
+                      {quoteId ? "Recibo de esta cotizacion" : "Configuracion del recibo"}
+                    </div>
                     {receiptNo ? <div style={{ color: "#93c5fd", fontSize: 12, fontWeight: 700 }}>Recibo: {receiptNo}</div> : null}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }} className="mobile-quotes-form-grid">
@@ -1693,12 +1695,12 @@ export default function CotizacionPRO() {
                       <input style={input()} type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
                     </div>
                     <div>
-                      <label style={label()}>Hora de entrega</label>
+                      <label style={label()}>Hora de entrega (opcional)</label>
                       <input style={input()} type="time" value={deliveryTime} onChange={(e) => setDeliveryTime(e.target.value)} />
                     </div>
                   </div>
                   <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6 }}>
-                    Al convertir, el recibo guarda su estado y, si pones fecha de entrega, se sincroniza automaticamente con la agenda de pedidos.
+                    Al convertir, el recibo guarda su estado y, si pones fecha de entrega, se sincroniza automaticamente con la agenda de pedidos. La hora puede quedar vacia si puedes entregar en cualquier momento del dia.
                   </div>
                 </div>
 
@@ -1717,7 +1719,7 @@ export default function CotizacionPRO() {
                 </button>
 
                 <button onClick={convertToInvoice} style={btn()}>
-                  Convertir a recibo
+                  {receiptId ? "Actualizar recibo" : "Convertir a recibo"}
                 </button>
 
                 <button onClick={emailSend} style={btnPrimary()}>
