@@ -157,6 +157,19 @@ function receiptStatusLabel(status: ReceiptStatus) {
   return RECEIPT_STATUS_OPTIONS.find((option) => option.value === status)?.label || status;
 }
 
+function inferCityFromAddress(address: string) {
+  const value = String(address || "").trim();
+  if (!value) return "QUITO";
+
+  const parts = value
+    .split(/,|-/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const last = parts[parts.length - 1] || value;
+  return last.toUpperCase();
+}
+
 function genQuoteNo() {
   const d = new Date();
   const y = d.getFullYear();
@@ -947,6 +960,137 @@ export default function CotizacionPRO() {
     try {
       const doc = await buildDeliveryReceiptPDF();
       doc.save(`${quoteNo || "entrega"}-recibido.pdf`);
+    } finally {
+      exportingRef.current = false;
+    }
+  };
+
+  const buildShippingLabelPDF = async () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 12;
+    const logo = await urlToDataURL(COMPANY.logoPath);
+
+    doc.setFillColor(...COMPANY.accentBlue);
+    doc.rect(0, 0, pageW, 14, "F");
+
+    if (logo) {
+      doc.addImage(logo, "PNG", margin, 18, 26, 26);
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.text("HST GLOBAL STORE - QUITO", logo ? margin + 32 : margin, 28);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("Etiqueta de envio / despacho", logo ? margin + 32 : margin, 35);
+
+    doc.setDrawColor(25, 40, 65);
+    doc.setLineWidth(0.7);
+    doc.roundedRect(margin, 50, pageW - margin * 2, pageH - 70, 5, 5);
+
+    const city = inferCityFromAddress(clientAddress);
+    const bigLeft = margin + 8;
+    const bigRight = pageW - margin - 8;
+
+    let y = 64;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(20);
+    doc.text("CIUDAD DESTINO", bigLeft, y);
+    y += 12;
+    doc.setFontSize(56);
+    doc.text(city, pageW / 2, y, { align: "center", maxWidth: pageW - margin * 2 - 10 });
+
+    y += 18;
+    doc.setDrawColor(180);
+    doc.line(bigLeft, y, bigRight, y);
+
+    y += 12;
+    doc.setFontSize(18);
+    doc.text("DESTINATARIO", bigLeft, y);
+    y += 12;
+    doc.setFontSize(40);
+    doc.text((clientName || "SIN NOMBRE").toUpperCase(), pageW / 2, y, {
+      align: "center",
+      maxWidth: pageW - margin * 2 - 10,
+    });
+
+    y += 14;
+    doc.setDrawColor(180);
+    doc.line(bigLeft, y, bigRight, y);
+
+    y += 12;
+    doc.setFontSize(18);
+    doc.text("CEDULA / RUC", bigLeft, y);
+    y += 12;
+    doc.setFontSize(34);
+    doc.text((clientId || "NO REGISTRADO").toUpperCase(), pageW / 2, y, {
+      align: "center",
+      maxWidth: pageW - margin * 2 - 10,
+    });
+
+    y += 14;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: bigLeft, right: bigLeft },
+      tableWidth: pageW - margin * 2 - 16,
+      head: [["Dato", "Informacion"]],
+      body: [
+        ["Telefono", clientPhone || "-"],
+        ["Direccion", clientAddress || "-"],
+        ["Entrega", deliveryDate ? `${deliveryDate}${deliveryTime ? ` ${deliveryTime}` : " - cualquier hora"}` : "-"],
+        ["Cotizacion", quoteNo || "-"],
+        ["Recibo", receiptNo || "-"],
+        ["Total del envio", `$ ${money(totals.totalFinal)}`],
+        ["Contenido", totals.lines.map((line) => `${line.qty} x ${line.description || "-"}`).join(" | ") || "-"],
+      ],
+      styles: {
+        font: "helvetica",
+        fontSize: 11,
+        cellPadding: 3,
+        lineWidth: 0.15,
+      },
+      headStyles: {
+        fillColor: [239, 244, 255],
+        textColor: [12, 20, 36],
+        fontStyle: "bold",
+      },
+      columnStyles: {
+        0: { cellWidth: 38, fontStyle: "bold" },
+        1: { cellWidth: pageW - margin * 2 - 16 - 38 },
+      },
+    });
+
+    const afterTableY = ((doc as any).lastAutoTable?.finalY ?? y + 50) + 10;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("Observaciones de envio", bigLeft, afterTableY);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(
+      doc.splitTextToSize(
+        "Manipular con cuidado. Verificar documento y nombre del destinatario antes de entregar.",
+        pageW - margin * 2 - 16,
+      ),
+      bigLeft,
+      afterTableY + 6,
+    );
+
+    doc.setFontSize(8);
+    doc.setTextColor(110);
+    doc.text(`${COMPANY.name} - Etiqueta generada desde HST Contabilidad`, margin, 289);
+    doc.setTextColor(0);
+
+    return doc;
+  };
+
+  const downloadShippingLabelPDF = async () => {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    try {
+      const doc = await buildShippingLabelPDF();
+      doc.save(`${quoteNo || "envio"}-etiqueta.pdf`);
     } finally {
       exportingRef.current = false;
     }
@@ -1822,9 +1966,14 @@ export default function CotizacionPRO() {
                     Al convertir, el recibo guarda su estado y, si pones fecha de entrega, se sincroniza automaticamente con la agenda de pedidos. La hora puede quedar vacia si puedes entregar en cualquier momento del dia.
                   </div>
                   {quoteId ? (
-                    <button onClick={downloadDeliveryReceiptPDF} style={btn()} type="button">
-                      Descargar datos de entrega
-                    </button>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={downloadDeliveryReceiptPDF} style={btn()} type="button">
+                        Descargar datos de entrega
+                      </button>
+                      <button onClick={downloadShippingLabelPDF} style={btn()} type="button">
+                        Descargar etiqueta de envio
+                      </button>
+                    </div>
                   ) : null}
                 </div>
 
