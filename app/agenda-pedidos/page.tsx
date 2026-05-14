@@ -590,37 +590,32 @@ function isMobileDevice() {
 }
 
 function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Window | null) {
-  const usable = orderedStops.filter((row) => row.address.trim());
+  const usable = orderedStops.filter((row) => Boolean(getMapsStopValue(row)));
   if (usable.length === 0) {
     alert("No hay direcciones listas para armar la ruta.");
     if (targetWindow && !targetWindow.closed) targetWindow.close();
     return;
   }
 
-  const destination = getMapsStopValue(usable[usable.length - 1]);
-  const waypoints = usable
-    .slice(0, -1)
-    .slice(0, 9)
+  const stopValues = usable
     .map(getMapsStopValue)
     .filter(Boolean)
-    .join("|");
+    .slice(0, 9);
 
-  const url = new URL("https://www.google.com/maps/dir/");
-  url.searchParams.set("api", "1");
-  url.searchParams.set("destination", destination);
-  if (waypoints) url.searchParams.set("waypoints", waypoints);
+  const routePath = stopValues.map((value) => encodeURIComponent(value)).join("/");
+  const url = `https://www.google.com/maps/dir/${routePath}`;
 
     if (targetWindow && !targetWindow.closed) {
-      targetWindow.location.href = url.toString();
+      targetWindow.location.href = url;
       return;
     }
 
     if (isMobileDevice()) {
-      window.location.href = url.toString();
+      window.location.href = url;
       return;
     }
 
-    window.open(url.toString(), "_blank");
+    window.open(url, "_blank");
   }
 
   function openGoogleMapsRoute() {
@@ -628,13 +623,34 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
 
     const startRoute = (location: { lat: number; lng: number } | null) => {
       const orderedStops = orderedForDisplay.length ? orderedForDisplay : orderRouteByLocation(dailyOrders, location);
+      const startStop: DeliveryOrder[] = location
+        ? [
+            {
+              id: "__origin__",
+              delivery_date: routeDate,
+              client_name: "Tu ubicacion",
+              phone: null,
+              address: `${location.lat},${location.lng}`,
+              reference: null,
+              notes: null,
+              amount: 0,
+              time_window: null,
+              priority: "MEDIA",
+              status: "PENDIENTE",
+              latitude: location.lat,
+              longitude: location.lng,
+              route_position: 0,
+            },
+          ]
+        : [];
+      const routeWithOrigin = location ? [...startStop, ...orderedStops] : orderedStops;
       if (location) {
         setGeo(location);
         setStatus("Ruta abierta usando coordenadas y ordenada desde tu ubicacion actual.");
       } else {
         setStatus("Ruta abierta con coordenadas disponibles. Puedes elegir el modo de viaje en Maps.");
       }
-      launchGoogleMapsRoute(orderedStops, routeWindow);
+      launchGoogleMapsRoute(routeWithOrigin, routeWindow);
     };
 
     if (!navigator.geolocation) {
