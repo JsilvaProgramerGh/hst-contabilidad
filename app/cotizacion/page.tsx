@@ -170,6 +170,11 @@ function inferCityFromAddress(address: string) {
   return last.toUpperCase();
 }
 
+function formatDeliveryWindow(date: string, time: string) {
+  if (!date) return "-";
+  return `${date}${time ? ` ${time}` : " - cualquier hora"}`;
+}
+
 function genQuoteNo() {
   const d = new Date();
   const y = d.getFullYear();
@@ -246,11 +251,16 @@ export default function CotizacionPRO() {
   const [receiptStatus, setReceiptStatus] = useState<ReceiptStatus>("PENDIENTE_PAGO");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [deliveryTime, setDeliveryTime] = useState("");
+  const [signatureSheetOpen, setSignatureSheetOpen] = useState(false);
+  const [signatureReady, setSignatureReady] = useState(false);
 
   // historial
   const [list, setList] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [loadingList, setLoadingList] = useState(false);
+  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const signatureDrawingRef = useRef(false);
+  const signaturePointRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -360,6 +370,33 @@ export default function CotizacionPRO() {
 
     return { lines, subtotal, iva, disc, neto, del, totalFinal, paidVal, saldo };
   }, [items, ivaRate, discount, delivery, paid]);
+
+  useEffect(() => {
+    if (!signatureSheetOpen) return;
+
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(320, Math.floor(canvas.getBoundingClientRect().width));
+    const height = 220;
+
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    canvas.style.height = `${height}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.scale(ratio, ratio);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2.2;
+    setSignatureReady(false);
+  }, [signatureSheetOpen]);
 
   const productCatalog = useMemo(() => {
     const grouped = new Map<
@@ -846,55 +883,133 @@ export default function CotizacionPRO() {
     }
   };
 
-  const buildDeliveryReceiptPDF = async () => {
+  const getCanvasPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  };
+
+  const handleSignatureStart = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current;
+    const point = getCanvasPoint(event);
+    if (!canvas || !point) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    signatureDrawingRef.current = true;
+    signaturePointRef.current = point;
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+    event.preventDefault();
+  };
+
+  const handleSignatureMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!signatureDrawingRef.current) return;
+    const canvas = signatureCanvasRef.current;
+    const point = getCanvasPoint(event);
+    if (!canvas || !point) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const previous = signaturePointRef.current || point;
+    ctx.beginPath();
+    ctx.moveTo(previous.x, previous.y);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    signaturePointRef.current = point;
+    setSignatureReady(true);
+    event.preventDefault();
+  };
+
+  const handleSignatureEnd = () => {
+    signatureDrawingRef.current = false;
+    signaturePointRef.current = null;
+  };
+
+  const clearSignature = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const ratio = window.devicePixelRatio || 1;
+    const displayWidth = canvas.width / ratio;
+    const displayHeight = canvas.height / ratio;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, displayWidth, displayHeight);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2.2;
+    setSignatureReady(false);
+  };
+
+  const getSignatureDataUrl = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas || !signatureReady) return null;
+    return canvas.toDataURL("image/png");
+  };
+
+  const buildDeliveryReceiptPDF = async (options?: { clientSignatureDataUrl?: string | null; signedByTouch?: boolean }) => {
     const doc = new jsPDF("p", "mm", "a4");
     const pageW = doc.internal.pageSize.getWidth();
     const margin = 14;
     const logo = await urlToDataURL(COMPANY.logoPath);
+    const clientSignature = options?.clientSignatureDataUrl || null;
 
     doc.setFillColor(...COMPANY.accentBlue);
-    doc.rect(0, 0, pageW, 9, "F");
+    doc.rect(0, 0, pageW, 10, "F");
 
-    if (logo) doc.addImage(logo, "PNG", margin, 14, 30, 30);
+    doc.setDrawColor(28, 44, 80);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(margin, 16, pageW - margin * 2, 34, 3, 3);
 
+    if (logo) doc.addImage(logo, "PNG", margin + 3, 20, 24, 24);
+
+    const headerLeftX = margin + (logo ? 31 : 5);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(17);
-    doc.text("DATOS DE ENTREGA / RECIBIDO", margin + (logo ? 36 : 0), 22);
+    doc.setFontSize(18);
+    doc.text("DATOS DE ENTREGA / RECIBIDO", headerLeftX, 27);
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    const headerLines = [
-      COMPANY.name,
-      COMPANY.phone,
-      COMPANY.email,
-    ].filter(Boolean);
-    headerLines.forEach((line, index) => {
-      doc.text(String(line), margin + (logo ? 36 : 0), 28 + index * 4);
+    [COMPANY.name, COMPANY.phone, COMPANY.email].filter(Boolean).forEach((line, index) => {
+      doc.text(String(line), headerLeftX, 34 + index * 4.2);
     });
 
-    const boxX = pageW - margin - 72;
-    doc.rect(boxX, 14, 72, 32);
+    const boxW = 60;
+    const boxX = pageW - margin - boxW - 3;
+    doc.roundedRect(boxX, 20, boxW, 25, 2, 2);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text("REFERENCIA", boxX + 4, 20);
+    doc.text("REFERENCIA", boxX + 4, 26);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(`Cotizacion: ${quoteNo || "-"}`, boxX + 4, 27);
-    doc.text(`Recibo: ${receiptNo || "-"}`, boxX + 4, 33);
-    doc.text(`Fecha entrega: ${deliveryDate || "-"}`, boxX + 4, 39);
-    doc.text(`Hora entrega: ${deliveryTime || "Cualquier hora"}`, boxX + 4, 45);
+    doc.text(`Cotizacion: ${quoteNo || "-"}`, boxX + 4, 32);
+    doc.text(`Recibo: ${receiptNo || "-"}`, boxX + 4, 37);
+    doc.text(`Entrega: ${formatDeliveryWindow(deliveryDate, deliveryTime)}`, boxX + 4, 42, {
+      maxWidth: boxW - 8,
+    });
 
-    let y = 56;
+    let y = 60;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.text("DATOS DEL CLIENTE", margin, y);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.rect(margin, y + 3, pageW - margin * 2, 28);
+    doc.roundedRect(margin, y + 3, pageW - margin * 2, 28, 2, 2);
     doc.text(`Nombre: ${clientName || "-"}`, margin + 4, y + 10);
     doc.text(`Documento: ${clientId || "-"}`, pageW / 2, y + 10);
     doc.text(`Telefono: ${clientPhone || "-"}`, margin + 4, y + 16);
-    doc.text(`Direccion: ${clientAddress || "-"}`, margin + 4, y + 22);
+    doc.text(doc.splitTextToSize(`Direccion: ${clientAddress || "-"}`, pageW - margin * 2 - 8), margin + 4, y + 22);
 
     y += 38;
     autoTable(doc, {
@@ -923,7 +1038,7 @@ export default function CotizacionPRO() {
 
     const afterTableY = ((doc as any).lastAutoTable?.finalY ?? y + 30) + 8;
 
-    doc.rect(pageW - margin - 70, afterTableY, 70, 18);
+    doc.roundedRect(pageW - margin - 70, afterTableY, 70, 18, 2, 2);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.text("TOTAL RECIBIDO", pageW - margin - 66, afterTableY + 7);
@@ -932,19 +1047,32 @@ export default function CotizacionPRO() {
 
     const signatureTop = Math.max(afterTableY + 34, 215);
     doc.setDrawColor(90);
-    doc.line(margin + 8, signatureTop, margin + 78, signatureTop);
-    doc.line(pageW - margin - 78, signatureTop, pageW - margin - 8, signatureTop);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text("Firma de quien entrega", margin + 43, signatureTop + 6, { align: "center" });
-    doc.text("Firma del cliente / recibido", pageW - margin - 43, signatureTop + 6, { align: "center" });
+    doc.text("Firma del cliente / recibido", pageW / 2, signatureTop + 6, { align: "center" });
+
+    const signatureBoxX = margin + 20;
+    const signatureBoxY = signatureTop + 10;
+    const signatureBoxW = pageW - margin * 2 - 40;
+    doc.roundedRect(signatureBoxX, signatureBoxY, signatureBoxW, 30, 2, 2);
+
+    if (clientSignature) {
+      doc.addImage(clientSignature, "PNG", signatureBoxX + 4, signatureBoxY + 3, signatureBoxW - 8, 18);
+    } else {
+      doc.line(signatureBoxX + 8, signatureBoxY + 22, signatureBoxX + signatureBoxW - 8, signatureBoxY + 22);
+    }
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text("Nombre: ____________________", margin + 8, signatureTop + 14);
-    doc.text("Cedula: ____________________", margin + 8, signatureTop + 20);
-    doc.text("Nombre: ____________________", pageW - margin - 78, signatureTop + 14);
-    doc.text("Cedula: ____________________", pageW - margin - 78, signatureTop + 20);
+    doc.text(`Nombre: ${clientName || "____________________"}`, margin + 12, signatureBoxY + 37);
+    doc.text(`Cedula: ${clientId || "____________________"}`, pageW / 2 + 6, signatureBoxY + 37);
+
+    if (options?.signedByTouch) {
+      doc.setFontSize(8);
+      doc.setTextColor(90);
+      doc.text("Firma capturada desde el telefono del cliente.", margin, signatureBoxY + 45);
+      doc.setTextColor(0);
+    }
 
     doc.setFontSize(8);
     doc.setTextColor(110);
@@ -960,6 +1088,27 @@ export default function CotizacionPRO() {
     try {
       const doc = await buildDeliveryReceiptPDF();
       doc.save(`${quoteNo || "entrega"}-recibido.pdf`);
+    } finally {
+      exportingRef.current = false;
+    }
+  };
+
+  const downloadSignedDeliveryReceiptPDF = async () => {
+    const signatureDataUrl = getSignatureDataUrl();
+    if (!signatureDataUrl) {
+      alert("Primero pide al cliente que firme en la pantalla.");
+      return;
+    }
+
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    try {
+      const doc = await buildDeliveryReceiptPDF({
+        clientSignatureDataUrl: signatureDataUrl,
+        signedByTouch: true,
+      });
+      doc.save(`${quoteNo || "entrega"}-firmado.pdf`);
+      setSignatureSheetOpen(false);
     } finally {
       exportingRef.current = false;
     }
@@ -1970,6 +2119,9 @@ export default function CotizacionPRO() {
                       <button onClick={downloadDeliveryReceiptPDF} style={btn()} type="button">
                         Descargar datos de entrega
                       </button>
+                      <button onClick={() => setSignatureSheetOpen(true)} style={btnPrimary()} type="button">
+                        Hoja firmable en telefono
+                      </button>
                       <button onClick={downloadShippingLabelPDF} style={btn()} type="button">
                         Descargar etiqueta de envio
                       </button>
@@ -2169,6 +2321,132 @@ export default function CotizacionPRO() {
           </div>
         </>
       )}
+
+      {signatureSheetOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 60,
+            background: "rgba(2, 6, 23, 0.88)",
+            backdropFilter: "blur(6px)",
+            padding: 12,
+            overflowY: "auto",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 760,
+              margin: "0 auto",
+              background: "#ffffff",
+              color: "#0f172a",
+              borderRadius: 24,
+              padding: 18,
+              boxShadow: "0 30px 80px rgba(0,0,0,0.3)",
+              display: "grid",
+              gap: 16,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1.4, color: "#2563eb", textTransform: "uppercase" }}>
+                  HST GLOBAL STORE
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 900, marginTop: 4 }}>Hoja de entrega firmable</div>
+                <div style={{ color: "#475569", marginTop: 6, lineHeight: 1.5 }}>
+                  Muestra esta hoja en el telefono para que el cliente firme con el dedo o con stylus.
+                </div>
+              </div>
+              <button onClick={() => setSignatureSheetOpen(false)} style={btn()} type="button">
+                Cerrar
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                background: "#f8fafc",
+                border: "1px solid #dbe4f0",
+                borderRadius: 18,
+                padding: 14,
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Cliente</div>
+                <div style={{ fontSize: 22, fontWeight: 900, marginTop: 4 }}>{clientName || "Sin nombre"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Documento</div>
+                <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>{clientId || "-"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Direccion</div>
+                <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>{clientAddress || "-"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Entrega</div>
+                <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>{formatDeliveryWindow(deliveryDate, deliveryTime)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Cotizacion</div>
+                <div style={{ fontSize: 16, fontWeight: 800, marginTop: 4 }}>{quoteNo || "-"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Total recibido</div>
+                <div style={{ fontSize: 28, fontWeight: 900, marginTop: 4 }}>$ {money(totals.totalFinal)}</div>
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid #dbe4f0", borderRadius: 18, overflow: "hidden" }}>
+              <div style={{ padding: "12px 14px", background: "#eff6ff", borderBottom: "1px solid #dbe4f0", fontWeight: 800 }}>
+                Productos entregados
+              </div>
+              <div style={{ display: "grid", gap: 10, padding: 14 }}>
+                {totals.lines.map((line, index) => (
+                  <div key={`${line.description}-${index}`} style={{ display: "grid", gridTemplateColumns: "60px 1fr auto", gap: 10, alignItems: "start" }}>
+                    <div style={{ fontWeight: 800 }}>{line.qty}</div>
+                    <div style={{ fontWeight: 700 }}>{line.description || "-"}</div>
+                    <div style={{ fontWeight: 800 }}>$ {money(line.total)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ fontSize: 15, fontWeight: 900 }}>Firma del cliente</div>
+              <div style={{ color: "#64748b", fontSize: 14, lineHeight: 1.6 }}>
+                Pide al cliente que firme dentro del recuadro. Luego toca <b>Descargar PDF firmado</b>.
+              </div>
+              <canvas
+                ref={signatureCanvasRef}
+                onPointerDown={handleSignatureStart}
+                onPointerMove={handleSignatureMove}
+                onPointerUp={handleSignatureEnd}
+                onPointerLeave={handleSignatureEnd}
+                style={{
+                  width: "100%",
+                  height: 220,
+                  background: "#ffffff",
+                  borderRadius: 18,
+                  border: "2px dashed #93c5fd",
+                  touchAction: "none",
+                }}
+              />
+            </div>
+
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+              <button onClick={clearSignature} style={btn()} type="button">
+                Limpiar firma
+              </button>
+              <button onClick={downloadSignedDeliveryReceiptPDF} style={btnPrimary()} type="button">
+                Descargar PDF firmado
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
