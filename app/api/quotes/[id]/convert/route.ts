@@ -53,7 +53,7 @@ export async function GET(
   try {
     const sb = supabaseServer();
     const { data: receipt, error } = await sb
-      .from("invoices")
+      .from("quote_receipts")
       .select("*")
       .eq("quote_id", id)
       .maybeSingle();
@@ -119,7 +119,7 @@ export async function POST(
     );
 
     const { data: existingReceipt, error: existingError } = await sb
-      .from("invoices")
+      .from("quote_receipts")
       .select("*")
       .eq("quote_id", id)
       .maybeSingle();
@@ -143,9 +143,9 @@ export async function POST(
     };
 
     const receiptResult = existingReceipt?.id
-      ? await sb.from("invoices").update(receiptPayload).eq("id", existingReceipt.id).select("*").single()
+      ? await sb.from("quote_receipts").update(receiptPayload).eq("id", existingReceipt.id).select("*").single()
       : await sb
-          .from("invoices")
+          .from("quote_receipts")
           .insert({
             ...receiptPayload,
             created_at: new Date().toISOString(),
@@ -180,14 +180,14 @@ export async function POST(
         time_window: deliveryTime,
         status: receiptStatus === "ENTREGADO" ? "ENTREGADO" : "PENDIENTE",
         source_quote_id: id,
-        source_invoice_id: receipt.id,
+        source_receipt_id: receipt.id,
         source_kind: "RECIBO",
       };
 
       const { data: existingOrder, error: existingOrderError } = await sb
         .from("delivery_orders")
         .select("id")
-        .eq("source_invoice_id", receipt.id)
+        .eq("source_receipt_id", receipt.id)
         .maybeSingle();
 
       if (existingOrderError) {
