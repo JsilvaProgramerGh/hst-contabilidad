@@ -72,6 +72,52 @@ async function reverseGeocode(latitude: string, longitude: string) {
 
 function parseCombinedCoordinates(value: string) {
   const raw = value.trim();
+  if (!raw) return null;
+
+  const normalized = raw.startsWith("http") ? raw : raw.startsWith("www.") ? `https://${raw}` : raw;
+
+  try {
+    if (/google\.[^/]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps/i.test(normalized)) {
+      const url = new URL(normalized);
+      const queryCandidates = [
+        url.searchParams.get("q"),
+        url.searchParams.get("query"),
+        url.searchParams.get("ll"),
+        url.searchParams.get("destination"),
+        url.searchParams.get("origin"),
+      ].filter(Boolean) as string[];
+
+      for (const candidate of queryCandidates) {
+        const direct = candidate.match(/(-?\d+(?:[.,]\d+)?)\s*,\s*(-?\d+(?:[.,]\d+)?)/);
+        if (direct) {
+          return {
+            latitude: direct[1].replace(",", "."),
+            longitude: direct[2].replace(",", "."),
+          };
+        }
+      }
+
+      const pathPatterns = [
+        /@(-?\d+(?:[.,]\d+)?),\s*(-?\d+(?:[.,]\d+)?)/,
+        /!3d(-?\d+(?:[.,]\d+)?)!4d(-?\d+(?:[.,]\d+)?)/,
+        /\/dir\/(-?\d+(?:[.,]\d+)?),\s*(-?\d+(?:[.,]\d+)?)/,
+      ];
+
+      for (const pattern of pathPatterns) {
+        const match = normalized.match(pattern);
+        if (match) {
+          return {
+            latitude: match[1].replace(",", "."),
+            longitude: match[2].replace(",", "."),
+          };
+        }
+      }
+
+      return null;
+    }
+  } catch {
+    // Si no era una URL valida, seguimos con los formatos de texto normales.
+  }
 
   const patterns = [
     /@(-?\d+(?:[.,]\d+)?),\s*(-?\d+(?:[.,]\d+)?)/,
