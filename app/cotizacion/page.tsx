@@ -1142,44 +1142,84 @@ export default function CotizacionPRO() {
     const city = inferCityFromAddress(clientAddress);
     const bigLeft = margin + 8;
     const bigRight = pageW - margin - 8;
+    const contentWidth = pageW - margin * 2 - 24;
+
+    const drawFittedCenteredBlock = (
+      text: string,
+      options: {
+        label: string;
+        labelY: number;
+        valueTopY: number;
+        maxFont: number;
+        minFont: number;
+        maxLines?: number;
+      },
+    ) => {
+      const safe = (text || "-").trim().toUpperCase();
+      let size = options.maxFont;
+      let lines: string[] = [];
+
+      while (size >= options.minFont) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(size);
+        lines = doc.splitTextToSize(safe, contentWidth) as string[];
+        if ((options.maxLines || 2) >= lines.length) break;
+        size -= 2;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      doc.text(options.label, bigLeft, options.labelY);
+
+      doc.setFontSize(Math.max(size, options.minFont));
+      const lineHeight = Math.max(9, Math.round(Math.max(size, options.minFont) * 0.42));
+      lines.forEach((line, index) => {
+        doc.text(line, pageW / 2, options.valueTopY + index * lineHeight, {
+          align: "center",
+          maxWidth: contentWidth,
+        });
+      });
+
+      return options.valueTopY + Math.max(lines.length - 1, 0) * lineHeight;
+    };
 
     let y = 64;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(20);
-    doc.text("CIUDAD DESTINO", bigLeft, y);
-    y += 12;
-    doc.setFontSize(56);
-    doc.text(city, pageW / 2, y, { align: "center", maxWidth: pageW - margin * 2 - 10 });
+    const cityBottomY = drawFittedCenteredBlock(city, {
+      label: "CIUDAD DESTINO",
+      labelY: y,
+      valueTopY: y + 14,
+      maxFont: 44,
+      minFont: 24,
+      maxLines: 2,
+    });
 
-    y += 18;
+    y = cityBottomY + 10;
     doc.setDrawColor(180);
     doc.line(bigLeft, y, bigRight, y);
 
-    y += 12;
-    doc.setFontSize(18);
-    doc.text("DESTINATARIO", bigLeft, y);
-    y += 12;
-    doc.setFontSize(40);
-    doc.text((clientName || "SIN NOMBRE").toUpperCase(), pageW / 2, y, {
-      align: "center",
-      maxWidth: pageW - margin * 2 - 10,
+    const recipientBottomY = drawFittedCenteredBlock(clientName || "SIN NOMBRE", {
+      label: "DESTINATARIO",
+      labelY: y + 12,
+      valueTopY: y + 26,
+      maxFont: 28,
+      minFont: 18,
+      maxLines: 3,
     });
 
-    y += 14;
+    y = recipientBottomY + 10;
     doc.setDrawColor(180);
     doc.line(bigLeft, y, bigRight, y);
 
-    y += 12;
-    doc.setFontSize(18);
-    doc.text("CEDULA / RUC", bigLeft, y);
-    y += 12;
-    doc.setFontSize(34);
-    doc.text((clientId || "NO REGISTRADO").toUpperCase(), pageW / 2, y, {
-      align: "center",
-      maxWidth: pageW - margin * 2 - 10,
+    const documentBottomY = drawFittedCenteredBlock(clientId || "NO REGISTRADO", {
+      label: "CEDULA / RUC",
+      labelY: y + 12,
+      valueTopY: y + 26,
+      maxFont: 24,
+      minFont: 16,
+      maxLines: 2,
     });
 
-    y += 14;
+    y = documentBottomY + 12;
     autoTable(doc, {
       startY: y,
       margin: { left: bigLeft, right: bigLeft },
