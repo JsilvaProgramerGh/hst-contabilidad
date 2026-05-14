@@ -98,6 +98,29 @@ function parseCombinedCoordinates(value: string) {
   return { latitude, longitude };
 }
 
+function parseCoordsFromValues(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const parsed = parseCombinedCoordinates(String(value || ""));
+    if (parsed) {
+      const lat = Number(parsed.latitude);
+      const lng = Number(parsed.longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return { lat, lng };
+      }
+    }
+  }
+  return null;
+}
+
+function stripMapsLinks(value: string | null | undefined) {
+  return String(value || "")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/www\.\S+/gi, " ")
+    .replace(/google\.com\/maps\S*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (n: number) => (n * Math.PI) / 180;
   const r = 6371;
@@ -133,14 +156,22 @@ function compareOrdersByDateAndTime(a: DeliveryOrder, b: DeliveryOrder) {
   return String(a.client_name || "").localeCompare(String(b.client_name || ""));
 }
 
+function getOrderCoords(row: DeliveryOrder) {
+  if (row.latitude != null && row.longitude != null) {
+    return { lat: Number(row.latitude), lng: Number(row.longitude) };
+  }
+
+  return parseCoordsFromValues(row.address, row.reference, row.notes, row.client_name);
+}
+
 function orderRouteByLocation(orders: DeliveryOrder[], location: { lat: number; lng: number } | null) {
   const active = orders.filter((row) => row.status !== "ENTREGADO" && row.status !== "CANCELADO");
   if (!location) {
     return [...active].sort(compareOrdersByDateAndTime);
   }
 
-  const withCoords = active.filter((row) => row.latitude != null && row.longitude != null);
-  const withoutCoords = active.filter((row) => row.latitude == null || row.longitude == null);
+  const withCoords = active.filter((row) => Boolean(getOrderCoords(row)));
+  const withoutCoords = active.filter((row) => !getOrderCoords(row));
   const ordered: DeliveryOrder[] = [];
   let current = { lat: location.lat, lng: location.lng };
   const pool = [...withCoords];
@@ -149,7 +180,9 @@ function orderRouteByLocation(orders: DeliveryOrder[], location: { lat: number; 
     let bestIndex = 0;
     let bestDistance = Number.POSITIVE_INFINITY;
     pool.forEach((row, index) => {
-      const distance = haversineKm(current.lat, current.lng, Number(row.latitude), Number(row.longitude));
+      const coords = getOrderCoords(row);
+      if (!coords) return;
+      const distance = haversineKm(current.lat, current.lng, coords.lat, coords.lng);
       if (distance < bestDistance) {
         bestDistance = distance;
         bestIndex = index;
@@ -157,7 +190,7 @@ function orderRouteByLocation(orders: DeliveryOrder[], location: { lat: number; 
     });
     const [next] = pool.splice(bestIndex, 1);
     ordered.push(next);
-    current = { lat: Number(next.latitude), lng: Number(next.longitude) };
+    current = getOrderCoords(next) || current;
   }
 
   return [...ordered, ...withoutCoords].sort((a, b) => {
@@ -168,11 +201,13 @@ function orderRouteByLocation(orders: DeliveryOrder[], location: { lat: number; 
 }
 
 function getMapsStopValue(row: DeliveryOrder) {
-  if (row.address.trim()) {
-    return row.address.trim();
+  const coords = getOrderCoords(row);
+  if (coords) {
+    return `${coords.lat},${coords.lng}`;
   }
-  if (row.latitude != null && row.longitude != null) {
-    return `${row.latitude},${row.longitude}`;
+  const cleanedAddress = stripMapsLinks(row.address);
+  if (cleanedAddress) {
+    return cleanedAddress;
   }
   return "";
 }
@@ -255,9 +290,31 @@ export default function AgendaPedidosPage() {
     return [...arranged, ...missing];
   }, [routeOrders, manualRouteIds]);
 
+  const productsSummary = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    dailyOrders.forEach((row) => {
+      const raw = stripMapsLinks(row.notes) || stripMapsLinks(row.reference);
+      if (!raw) return;
+
+      raw
+        .split(/\n|,|;|•|·/g)
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .forEach((item) => {
+          const key = item.toLowerCase();
+          counts.set(key, (counts.get(key) || 0) + 1);
+        });
+    });
+
+    return Array.from(counts.entries())
+      .map(([key, qty]) => ({ label: key, qty }))
+      .sort((a, b) => b.qty - a.qty || a.label.localeCompare(b.label));
+  }, [dailyOrders]);
+
   const deliveredToday = dailyOrders.filter((row) => row.status === "ENTREGADO").length;
   const pendingToday = dailyOrders.filter((row) => row.status === "PENDIENTE" || row.status === "EN_RUTA").length;
-  const missingCoordsToday = dailyOrders.filter((row) => row.latitude == null || row.longitude == null).length;
+  const missingCoordsToday = dailyOrders.filter((row) => !getOrderCoords(row)).length;
 
   function resetForm() {
     setSelectedId(null);
@@ -295,6 +352,12 @@ export default function AgendaPedidosPage() {
     setLoading(true);
     setStatus(selectedId ? "Actualizando pedido..." : "Guardando pedido...");
 
+    const extractedCoords =
+      parseCoordsFromValues(form.maps_coords, form.address, form.reference, form.notes, form.client_name) ||
+      (form.latitude && form.longitude
+        ? { lat: Number(form.latitude), lng: Number(form.longitude) }
+        : null);
+
     const payload = {
       delivery_date: form.delivery_date,
       client_name: form.client_name.trim(),
@@ -306,8 +369,8 @@ export default function AgendaPedidosPage() {
       time_window: form.time_window.trim() || null,
       priority: form.priority,
       status: form.status,
-      latitude: toNumber(form.latitude),
-      longitude: toNumber(form.longitude),
+      latitude: extractedCoords?.lat ?? toNumber(form.latitude),
+      longitude: extractedCoords?.lng ?? toNumber(form.longitude),
     };
 
     const query = selectedId
@@ -326,7 +389,19 @@ export default function AgendaPedidosPage() {
   }
 
   async function applyAddressLookup() {
-    if (!form.address.trim()) {
+    const extracted = parseCoordsFromValues(form.maps_coords, form.address, form.reference, form.notes, form.client_name);
+    if (extracted) {
+      setForm((prev) => ({
+        ...prev,
+        latitude: String(extracted.lat),
+        longitude: String(extracted.lng),
+        maps_coords: `${extracted.lat}, ${extracted.lng}`,
+      }));
+      setStatus("Encontre coordenadas directamente desde el link o texto pegado.");
+      return;
+    }
+
+    if (!stripMapsLinks(form.address).trim()) {
       setStatus("Primero escribe una direccion.");
       return;
     }
@@ -334,7 +409,7 @@ export default function AgendaPedidosPage() {
     setStatus("Buscando coordenadas desde la direccion...");
 
     try {
-      const located = await geocodeAddress(form.address.trim(), form.reference.trim());
+      const located = await geocodeAddress(stripMapsLinks(form.address), stripMapsLinks(form.reference));
       if (!located) {
         setStatus("No pude ubicar esa direccion. Intenta ponerla mas completa.");
         return;
@@ -396,7 +471,7 @@ export default function AgendaPedidosPage() {
   }
 
   async function fillMissingCoordinates() {
-    const pending = dailyOrders.filter((row) => row.latitude == null || row.longitude == null);
+    const pending = dailyOrders.filter((row) => !getOrderCoords(row) || row.latitude == null || row.longitude == null);
     if (!pending.length) {
       setStatus("Todos los pedidos del dia ya tienen coordenadas.");
       return;
@@ -408,11 +483,17 @@ export default function AgendaPedidosPage() {
     let updated = 0;
     for (const row of pending) {
       try {
-        const located = await geocodeAddress(row.address, row.reference);
+        const extracted = parseCoordsFromValues(row.address, row.reference, row.notes, row.client_name);
+        const located =
+          extracted ||
+          (await geocodeAddress(stripMapsLinks(row.address), stripMapsLinks(row.reference)));
         if (!located) continue;
         const { error } = await supabase
           .from("delivery_orders")
-          .update({ latitude: located.latitude, longitude: located.longitude })
+          .update({
+            latitude: "latitude" in located ? located.latitude : located.lat,
+            longitude: "longitude" in located ? located.longitude : located.lng,
+          })
           .eq("id", row.id);
         if (!error) updated += 1;
       } catch {
@@ -430,14 +511,19 @@ export default function AgendaPedidosPage() {
   }
 
   function openCurrentPinInMaps() {
-    const parsed = parseCombinedCoordinates(form.maps_coords) || (form.latitude && form.longitude ? { latitude: form.latitude, longitude: form.longitude } : null);
+    const parsed =
+      parseCombinedCoordinates(form.maps_coords) ||
+      parseCombinedCoordinates(form.address) ||
+      parseCombinedCoordinates(form.reference) ||
+      (form.latitude && form.longitude ? { latitude: form.latitude, longitude: form.longitude } : null);
     if (parsed) {
       window.open(`https://www.google.com/maps?q=${parsed.latitude},${parsed.longitude}`, "_blank");
       return;
     }
 
-    if (form.address.trim()) {
-      window.open(`https://www.google.com/maps/search/${encodeURIComponent([form.address, form.reference].filter(Boolean).join(", "))}`, "_blank");
+    const lookupAddress = [stripMapsLinks(form.address), stripMapsLinks(form.reference)].filter(Boolean).join(", ");
+    if (lookupAddress) {
+      window.open(`https://www.google.com/maps/search/${encodeURIComponent(lookupAddress)}`, "_blank");
       return;
     }
 
@@ -544,9 +630,9 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
       const orderedStops = orderedForDisplay.length ? orderedForDisplay : orderRouteByLocation(dailyOrders, location);
       if (location) {
         setGeo(location);
-        setStatus("Ruta abierta desde tu ubicacion actual. Puedes elegir el modo de viaje en Maps.");
+        setStatus("Ruta abierta usando coordenadas y ordenada desde tu ubicacion actual.");
       } else {
-        setStatus("Ruta abierta. Puedes elegir el modo de viaje en Maps.");
+        setStatus("Ruta abierta con coordenadas disponibles. Puedes elegir el modo de viaje en Maps.");
       }
       launchGoogleMapsRoute(orderedStops, routeWindow);
     };
@@ -739,14 +825,44 @@ function launchGoogleMapsRoute(orderedStops: DeliveryOrder[], targetWindow?: Win
 
           {missingCoordsToday > 0 ? (
             <div style={helperBox}>
-              Hay {missingCoordsToday} pedido(s) del dia sin coordenadas. La ruta automatica mejora cuando usas
-              `Completar coordenadas` o guardas direcciones mas precisas.
+              Hay {missingCoordsToday} pedido(s) del dia sin coordenadas claras. Si pegaste links de Google Maps en direccion, referencia o notas, la app intentara leerlos y convertirlos en coordenadas.
             </div>
           ) : (
             <div style={helperBoxOk}>
-              Todos los pedidos visibles ya tienen coordenadas. La ruta ahora si se ordena por cercania.
+              Todos los pedidos visibles ya tienen coordenadas o links validos. La ruta ya puede ordenarse por cercania desde tu ubicacion.
             </div>
           )}
+
+          <div style={{ ...productSummaryCard, marginTop: 14 }}>
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>Lista rapida de productos del dia</div>
+            <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6, marginBottom: 10 }}>
+              Se arma usando lo que escribes en notas o referencia de los pedidos del dia, para ayudarte a salir con todo preparado.
+            </div>
+            {productsSummary.length === 0 ? (
+              <div style={emptyState}>Aun no detecto productos en notas o referencia para esta fecha.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {productsSummary.map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      alignItems: "center",
+                      padding: "10px 12px",
+                      borderRadius: 14,
+                      background: "rgba(8, 17, 29, 0.92)",
+                      border: "1px solid rgba(140, 166, 194, 0.12)",
+                    }}
+                  >
+                    <div style={{ color: "#eef4fb", textTransform: "capitalize" }}>{item.label}</div>
+                    <div style={{ color: "#93c5fd", fontWeight: 800 }}>x{item.qty}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div style={list}>
             {dailyOrders.length === 0 ? (
@@ -844,6 +960,7 @@ const rowActions: CSSProperties = { display: "flex", gap: 8, flexWrap: "wrap", j
 const emptyState: CSSProperties = { padding: 18, borderRadius: 18, border: "1px dashed rgba(140, 166, 194, 0.18)", color: "#8ea2bb", textAlign: "center" };
 const helperBox: CSSProperties = { marginTop: 14, padding: 12, borderRadius: 14, border: "1px solid rgba(245, 158, 11, 0.2)", background: "rgba(66, 32, 6, 0.18)", color: "#f4dfb3", lineHeight: 1.6, fontSize: 13 };
 const helperBoxOk: CSSProperties = { marginTop: 14, padding: 12, borderRadius: 14, border: "1px solid rgba(45, 212, 191, 0.22)", background: "rgba(8, 54, 49, 0.2)", color: "#d1fae5", lineHeight: 1.6, fontSize: 13 };
+const productSummaryCard: CSSProperties = { marginTop: 14, padding: 16, borderRadius: 18, border: "1px solid rgba(140, 166, 194, 0.12)", background: "rgba(8, 17, 29, 0.92)" };
 const warningCard: CSSProperties = { marginBottom: 18, padding: 18, borderRadius: 22, border: "1px solid rgba(245, 158, 11, 0.24)", background: "rgba(66, 32, 6, 0.24)" };
 const warningTitle: CSSProperties = { margin: "0 0 8px", color: "#fde68a", fontSize: 20 };
 const warningText: CSSProperties = { margin: 0, color: "#f4dfb3", lineHeight: 1.6 };
