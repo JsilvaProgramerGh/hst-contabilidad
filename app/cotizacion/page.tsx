@@ -833,6 +833,125 @@ export default function CotizacionPRO() {
     }
   };
 
+  const buildDeliveryReceiptPDF = async () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageW = doc.internal.pageSize.getWidth();
+    const margin = 14;
+    const logo = await urlToDataURL(COMPANY.logoPath);
+
+    doc.setFillColor(...COMPANY.accentBlue);
+    doc.rect(0, 0, pageW, 9, "F");
+
+    if (logo) doc.addImage(logo, "PNG", margin, 14, 30, 30);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(17);
+    doc.text("DATOS DE ENTREGA / RECIBIDO", margin + (logo ? 36 : 0), 22);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const headerLines = [
+      COMPANY.name,
+      COMPANY.phone,
+      COMPANY.email,
+    ].filter(Boolean);
+    headerLines.forEach((line, index) => {
+      doc.text(String(line), margin + (logo ? 36 : 0), 28 + index * 4);
+    });
+
+    const boxX = pageW - margin - 72;
+    doc.rect(boxX, 14, 72, 32);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("REFERENCIA", boxX + 4, 20);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`Cotizacion: ${quoteNo || "-"}`, boxX + 4, 27);
+    doc.text(`Recibo: ${receiptNo || "-"}`, boxX + 4, 33);
+    doc.text(`Fecha entrega: ${deliveryDate || "-"}`, boxX + 4, 39);
+    doc.text(`Hora entrega: ${deliveryTime || "Cualquier hora"}`, boxX + 4, 45);
+
+    let y = 56;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("DATOS DEL CLIENTE", margin, y);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.rect(margin, y + 3, pageW - margin * 2, 28);
+    doc.text(`Nombre: ${clientName || "-"}`, margin + 4, y + 10);
+    doc.text(`Documento: ${clientId || "-"}`, pageW / 2, y + 10);
+    doc.text(`Telefono: ${clientPhone || "-"}`, margin + 4, y + 16);
+    doc.text(`Direccion: ${clientAddress || "-"}`, margin + 4, y + 22);
+
+    y += 38;
+    autoTable(doc, {
+      startY: y,
+      head: [["Cant.", "Descripcion", "P. Unitario", "Total"]],
+      body: totals.lines.map((line) => [
+        String(line.qty),
+        line.description || "-",
+        `$ ${money(line.unitWithVat)}`,
+        `$ ${money(line.total)}`,
+      ]),
+      styles: { font: "helvetica", fontSize: 9, cellPadding: 2.4, lineWidth: 0.1 },
+      headStyles: {
+        fillColor: [245, 248, 255],
+        textColor: [10, 20, 40],
+        fontStyle: "bold",
+        lineWidth: 0.1,
+      },
+      columnStyles: {
+        0: { cellWidth: 18, halign: "center" },
+        1: { cellWidth: 104 },
+        2: { cellWidth: 28, halign: "right" },
+        3: { cellWidth: 28, halign: "right" },
+      },
+    });
+
+    const afterTableY = ((doc as any).lastAutoTable?.finalY ?? y + 30) + 8;
+
+    doc.rect(pageW - margin - 70, afterTableY, 70, 18);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("TOTAL RECIBIDO", pageW - margin - 66, afterTableY + 7);
+    doc.setFontSize(14);
+    doc.text(`$ ${money(totals.totalFinal)}`, pageW - margin - 4, afterTableY + 14, { align: "right" });
+
+    const signatureTop = Math.max(afterTableY + 34, 215);
+    doc.setDrawColor(90);
+    doc.line(margin + 8, signatureTop, margin + 78, signatureTop);
+    doc.line(pageW - margin - 78, signatureTop, pageW - margin - 8, signatureTop);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("Firma de quien entrega", margin + 43, signatureTop + 6, { align: "center" });
+    doc.text("Firma del cliente / recibido", pageW - margin - 43, signatureTop + 6, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("Nombre: ____________________", margin + 8, signatureTop + 14);
+    doc.text("Cedula: ____________________", margin + 8, signatureTop + 20);
+    doc.text("Nombre: ____________________", pageW - margin - 78, signatureTop + 14);
+    doc.text("Cedula: ____________________", pageW - margin - 78, signatureTop + 20);
+
+    doc.setFontSize(8);
+    doc.setTextColor(110);
+    doc.text(`${COMPANY.name} - Comprobante de entrega generado desde HST Contabilidad`, margin, 289);
+    doc.setTextColor(0);
+
+    return doc;
+  };
+
+  const downloadDeliveryReceiptPDF = async () => {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    try {
+      const doc = await buildDeliveryReceiptPDF();
+      doc.save(`${quoteNo || "entrega"}-recibido.pdf`);
+    } finally {
+      exportingRef.current = false;
+    }
+  };
+
   const uploadPDFandGetUrl = async (): Promise<string | null> => {
     const sb = supabaseBrowser();
     const doc = await buildPDF();
@@ -1702,6 +1821,11 @@ export default function CotizacionPRO() {
                   <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6 }}>
                     Al convertir, el recibo guarda su estado y, si pones fecha de entrega, se sincroniza automaticamente con la agenda de pedidos. La hora puede quedar vacia si puedes entregar en cualquier momento del dia.
                   </div>
+                  {quoteId ? (
+                    <button onClick={downloadDeliveryReceiptPDF} style={btn()} type="button">
+                      Descargar datos de entrega
+                    </button>
+                  ) : null}
                 </div>
 
                 <button onClick={downloadPDF} style={btnPrimary()}>
