@@ -872,22 +872,32 @@ export default function CotizacionPRO() {
     line("Saldo:", `$ ${money(totals.saldo)}`, ty, true);
 
     let textY = totalsBoxY + 54;
+    const contentWidth = pageW - margin * 2;
+    const noteLines = doc.splitTextToSize(notes || "-", contentWidth);
+    const termsLines = doc.splitTextToSize((terms || "-").trim(), contentWidth);
+    const lineHeight = 4.2;
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.text("NOTAS", margin, textY);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(doc.splitTextToSize(notes || "-", pageW - margin * 2), margin, textY + 5);
+    doc.text(noteLines, margin, textY + 5);
 
-    textY += 18;
+    textY += 5 + noteLines.length * lineHeight + 6;
+    const projectedTermsBottom = textY + 5 + termsLines.length * lineHeight;
+
+    if (projectedTermsBottom > 252) {
+      doc.addPage();
+      textY = 24;
+    }
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text("TÉRMINOS Y CONDICIONES", margin, textY);
+    doc.text("TERMINOS Y CONDICIONES", margin, textY);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(doc.splitTextToSize((terms || "-").trim(), pageW - margin * 2), margin, textY + 5);
+    doc.text(termsLines, margin, textY + 5);
 
     const footerY = 270;
     if (sign) doc.addImage(sign, "PNG", pageW - margin - 55, footerY - 18, 50, 18);
