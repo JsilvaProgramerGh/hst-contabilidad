@@ -4,6 +4,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import {
+  DEFAULT_QUOTE_COMPANY_PROFILE,
+  mapQuoteCompanyProfile,
+  type QuoteCompanyProfile,
+} from "@/lib/quote-company-profile";
 type Item = {
   qty: string;
   description: string;
@@ -65,18 +70,20 @@ const RECEIPT_STATUS_OPTIONS: Array<{ value: ReceiptStatus; label: string }> = [
 ];
 
 const COMPANY = {
-  name: "HST GLOBAL STORE",
-  ruc: "0962974689001",
-  address: "Dirección: Quevedo, calle guatemala y chile",
-  city: "Ecuador",
-  phone: "WhatsApp: 0982124443",
-  email: "Email: ventas@hstglobalstore.com",
-  website: "",
-  logoPath: "/logo.png",
+  ...DEFAULT_QUOTE_COMPANY_PROFILE,
+  logoPath: DEFAULT_QUOTE_COMPANY_PROFILE.logo_url,
   sealPath: "/seal.png",
   signPath: "/firma.png",
-  accentBlue: [16, 95, 255] as [number, number, number],
+  accentBlue: hexToRgb(DEFAULT_QUOTE_COMPANY_PROFILE.accent_blue),
 };
+
+function hexToRgb(hex: string) {
+  const safe = String(hex || DEFAULT_QUOTE_COMPANY_PROFILE.accent_blue).replace("#", "").trim();
+  const normalized = safe.length === 3 ? safe.split("").map((char) => char + char).join("") : safe;
+  const parsed = Number.parseInt(normalized, 16);
+  if (!Number.isFinite(parsed)) return [16, 95, 255] as [number, number, number];
+  return [parsed >> 16 & 255, parsed >> 8 & 255, parsed & 255] as [number, number, number];
+}
 
 function money(n: number) {
   const v = Number.isFinite(n) ? n : 0;
@@ -201,6 +208,7 @@ async function urlToDataURL(url: string): Promise<string | null> {
 }
 
 export default function CotizacionPRO() {
+  const [companyProfile, setCompanyProfile] = useState<QuoteCompanyProfile>(DEFAULT_QUOTE_COMPANY_PROFILE);
   const [tab, setTab] = useState<"nueva" | "historial">("nueva");
 
   const [quoteId, setQuoteId] = useState<string | null>(null);
@@ -261,6 +269,26 @@ export default function CotizacionPRO() {
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const signatureDrawingRef = useRef(false);
   const signaturePointRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const sb = supabaseBrowser();
+
+    (async () => {
+      const { data } = await sb
+        .from("quote_company_profile")
+        .select("id,name,ruc,address,city,phone,email,website,logo_url,accent_blue")
+        .eq("id", "default")
+        .maybeSingle();
+
+      if (!active || !data) return;
+      setCompanyProfile(mapQuoteCompanyProfile(data as Partial<QuoteCompanyProfile>));
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -720,11 +748,12 @@ export default function CotizacionPRO() {
     const pageW = doc.internal.pageSize.getWidth();
     const margin = 12;
 
-    const logo = await urlToDataURL(COMPANY.logoPath);
+    const logo = await urlToDataURL(companyProfile.logo_url || COMPANY.logoPath);
     const seal = await urlToDataURL(COMPANY.sealPath);
     const sign = await urlToDataURL(COMPANY.signPath);
+    const accentBlue = hexToRgb(companyProfile.accent_blue);
 
-    doc.setFillColor(...COMPANY.accentBlue);
+    doc.setFillColor(...accentBlue);
     doc.rect(0, 0, pageW, 8, "F");
 
     const y = 18;
@@ -738,13 +767,13 @@ export default function CotizacionPRO() {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     const companyLines = [
-      COMPANY.name,
-      COMPANY.ruc,
-      COMPANY.address,
-      COMPANY.city,
-      COMPANY.phone,
-      COMPANY.email,
-      COMPANY.website,
+      companyProfile.name,
+      companyProfile.ruc,
+      companyProfile.address,
+      companyProfile.city,
+      companyProfile.phone,
+      companyProfile.email,
+      companyProfile.website,
     ].filter(Boolean);
 
     companyLines.forEach((l, i) => doc.text(String(l), margin + (logo ? 38 : 0), y + 6 + i * 4));
@@ -866,7 +895,7 @@ export default function CotizacionPRO() {
 
     doc.setFontSize(8);
     doc.setTextColor(120);
-    doc.text(`${COMPANY.name} — Documento generado desde HST Contabilidad`, margin, 289);
+    doc.text(`${companyProfile.name} — Documento generado desde HST Contabilidad`, margin, 289);
     doc.setTextColor(0);
 
     return doc;
@@ -962,10 +991,11 @@ export default function CotizacionPRO() {
     const doc = new jsPDF("p", "mm", "a4");
     const pageW = doc.internal.pageSize.getWidth();
     const margin = 14;
-    const logo = await urlToDataURL(COMPANY.logoPath);
+    const logo = await urlToDataURL(companyProfile.logo_url || COMPANY.logoPath);
     const clientSignature = options?.clientSignatureDataUrl || null;
+    const accentBlue = hexToRgb(companyProfile.accent_blue);
 
-    doc.setFillColor(...COMPANY.accentBlue);
+    doc.setFillColor(...accentBlue);
     doc.rect(0, 0, pageW, 10, "F");
 
     doc.setDrawColor(28, 44, 80);
@@ -981,7 +1011,7 @@ export default function CotizacionPRO() {
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    [COMPANY.name, COMPANY.phone, COMPANY.email].filter(Boolean).forEach((line, index) => {
+    [companyProfile.name, companyProfile.phone, companyProfile.email].filter(Boolean).forEach((line, index) => {
       doc.text(String(line), headerLeftX, 34 + index * 4.2);
     });
 
@@ -1076,7 +1106,7 @@ export default function CotizacionPRO() {
 
     doc.setFontSize(8);
     doc.setTextColor(110);
-    doc.text(`${COMPANY.name} - Comprobante de entrega generado desde HST Contabilidad`, margin, 289);
+    doc.text(`${companyProfile.name} - Comprobante de entrega generado desde HST Contabilidad`, margin, 289);
     doc.setTextColor(0);
 
     return doc;
@@ -1119,9 +1149,10 @@ export default function CotizacionPRO() {
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     const margin = 12;
-    const logo = await urlToDataURL(COMPANY.logoPath);
+    const logo = await urlToDataURL(companyProfile.logo_url || COMPANY.logoPath);
+    const accentBlue = hexToRgb(companyProfile.accent_blue);
 
-    doc.setFillColor(...COMPANY.accentBlue);
+    doc.setFillColor(...accentBlue);
     doc.rect(0, 0, pageW, 14, "F");
 
     if (logo) {
@@ -1130,7 +1161,7 @@ export default function CotizacionPRO() {
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(22);
-    doc.text("HST GLOBAL STORE - QUITO", logo ? margin + 32 : margin, 28);
+    doc.text(`${companyProfile.name} - ${companyProfile.city || "QUITO"}`, logo ? margin + 32 : margin, 28);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.text("Etiqueta de envio / despacho", logo ? margin + 32 : margin, 35);
@@ -1268,7 +1299,7 @@ export default function CotizacionPRO() {
 
     doc.setFontSize(8);
     doc.setTextColor(110);
-    doc.text(`${COMPANY.name} - Etiqueta generada desde HST Contabilidad`, margin, 289);
+    doc.text(`${companyProfile.name} - Etiqueta generada desde HST Contabilidad`, margin, 289);
     doc.setTextColor(0);
 
     return doc;
@@ -1618,7 +1649,7 @@ export default function CotizacionPRO() {
     }
 
     const msg = [
-      `*${COMPANY.name}*`,
+      `*${companyProfile.name}*`,
       `Cotización: *${quoteNo}*`,
       `Cliente: ${clientName || "-"}`,
       `Total: $ ${money(totals.totalFinal)}`,
@@ -1706,7 +1737,12 @@ export default function CotizacionPRO() {
   return (
     <div style={{ padding: 18, maxWidth: 1200, margin: "0 auto" }} className="mobile-quotes-page">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }} className="mobile-quotes-hero">
-        <h1 style={{ fontSize: 38, margin: 0, color: "#f8fafc" }}>Cotizaciones</h1>
+        <div>
+          <h1 style={{ fontSize: 38, margin: 0, color: "#f8fafc" }}>Cotizaciones</h1>
+          <a href="/empresa-cotizaciones" style={{ color: "#93c5fd", fontSize: 13, textDecoration: "none", fontWeight: 700 }}>
+            Editar logo y datos de la empresa
+          </a>
+        </div>
 
         <div style={{ display: "flex", gap: 8 }} className="mobile-quotes-tabs">
           <button onClick={() => setTab("nueva")} style={tabBtn(tab === "nueva")}>
