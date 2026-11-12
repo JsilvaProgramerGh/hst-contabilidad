@@ -10,6 +10,11 @@ function getMessage(error: unknown) {
   return "Unexpected error";
 }
 
+function escapeHtml(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
@@ -17,8 +22,8 @@ export async function POST(
   const { id } = await context.params;
 
   try {
-    const body = (await req.json()) as { email?: string; pdf_url?: string | null };
-    const email = body?.email?.trim();
+    const body = (await req.json()) as { email?: string; pdf_revision?: string };
+    const email = typeof body?.email === "string" ? body.email.trim() : "";
 
     if (!email) {
       return NextResponse.json({ error: "Email requerido" }, { status: 400 });
@@ -32,37 +37,45 @@ export async function POST(
     }
 
     const sb = supabaseServer();
-    const { data, error } = await sb.from("quotes").select("*").eq("id", id).single();
+    const [{ data, error }, { data: profile, error: profileError }] = await Promise.all([
+      sb.from("quotes").select("quote_no,date,client_name,pdf_url,pdf_revision").eq("id", id).single(),
+      sb.from("quote_company_profile").select("name").eq("id", "default").maybeSingle(),
+    ]);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    const resend = new Resend(resendApiKey);
-    const pdfUrl = body?.pdf_url || data.pdf_url || null;
+    if (profileError) {
+      return NextResponse.json({ error: profileError.message }, { status: 400 });
+    }
+    if (body.pdf_revision && body.pdf_revision !== data.pdf_revision) {
+      return NextResponse.json({ error: "La cotización cambió. Prepara el PDF de la versión actual." }, { status: 409 });
+    }
 
+    const pdfUrl = data.pdf_url;
+    if (!pdfUrl || !/^https?:\/\//i.test(pdfUrl)) {
+      return NextResponse.json({ error: "Guarda el PDF antes de enviar la cotización." }, { status: 400 });
+    }
+
+    const company = profile?.name?.trim();
+    const client = escapeHtml(data.client_name || "");
+    const number = escapeHtml(data.quote_no);
+    const link = escapeHtml(pdfUrl);
+    const resend = new Resend(resendApiKey);
     const { data: emailData, error: sendError } = await resend.emails.send({
       from: emailFrom,
       to: email,
-      subject: `Cotizacion ${data.quote_no} - ${data.client_name || "HST Global Store"}`,
+      subject: [`Cotización ${data.quote_no}`, company].filter(Boolean).join(" · "),
       html: `
         <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a">
-          <h2 style="margin-bottom:8px">HST Global Store</h2>
-          <p>Hola${data.client_name ? ` ${data.client_name}` : ""},</p>
-          <p>Te compartimos la cotizacion <strong>${data.quote_no}</strong>.</p>
-          <ul>
-            <li>Fecha: ${data.date || "-"}</li>
-            <li>Cliente: ${data.client_name || "-"}</li>
-          </ul>
-          ${
-            pdfUrl
-              ? `<p>Puedes revisar el PDF aqui: <a href="${pdfUrl}" target="_blank" rel="noreferrer">${pdfUrl}</a></p>`
-              : "<p>La cotizacion no tiene PDF adjunto todavia.</p>"
-          }
-          <p>Gracias por confiar en HST Global Store.</p>
+          ${company ? `<h2>${escapeHtml(company)}</h2>` : ""}
+          <p>Hola${client ? ` ${client}` : ""},</p>
+          <p>Te compartimos la cotización <strong>${number}</strong>.</p>
+          <p>Fecha de emisión: ${escapeHtml(data.date || "-")}</p>
+          <p><a href="${link}" target="_blank" rel="noreferrer">Ver cotización en PDF</a></p>
         </div>
       `,
     });
-
     if (sendError) {
       return NextResponse.json(
         { error: sendError.message || "Resend no pudo enviar el correo." },

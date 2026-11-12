@@ -15,32 +15,6 @@ create table if not exists public.quote_company_profile (
   updated_at timestamptz not null default now()
 );
 
-insert into public.quote_company_profile (
-  id,
-  name,
-  ruc,
-  address,
-  city,
-  phone,
-  email,
-  website,
-  logo_url,
-  accent_blue
-)
-values (
-  'default',
-  'HST GLOBAL STORE',
-  '0962974689001',
-  'Direccion: Quevedo, calle guatemala y chile',
-  'Ecuador',
-  'WhatsApp: 0982124443',
-  'Email: ventas@hstglobalstore.com',
-  '',
-  '/logo.png',
-  '#105fff'
-)
-on conflict (id) do nothing;
-
 create or replace function public.set_quote_company_profile_updated_at()
 returns trigger
 language plpgsql

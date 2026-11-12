@@ -3,13 +3,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { generateQuotePDF } from "@/lib/pdf/quotePdf";
+import { loadQuoteImage } from "@/lib/pdf/quote-images";
+import type { QuoteLineDetails } from "@/lib/quote-line";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
   DEFAULT_QUOTE_COMPANY_PROFILE,
   mapQuoteCompanyProfile,
   type QuoteCompanyProfile,
 } from "@/lib/quote-company-profile";
-type Item = {
+type Item = QuoteLineDetails & {
+  editorId: number;
   qty: string;
   description: string;
   unit: string;
@@ -100,12 +104,6 @@ function decimalValue(value: string | number | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function integerValue(value: string | number | null | undefined, fallback = 0) {
-  if (String(value ?? "").trim() === "") return fallback;
-  const parsed = Number.parseInt(normalizeNumericInput(String(value ?? "").trim()), 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function grossToNet(value: number, ivaRate: number) {
   if (!Number.isFinite(value) || value <= 0) return 0;
   if (!Number.isFinite(ivaRate) || ivaRate <= 0) return value;
@@ -182,14 +180,13 @@ function formatDeliveryWindow(date: string, time: string) {
   return `${date}${time ? ` ${time}` : " - cualquier hora"}`;
 }
 
-function genQuoteNo() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const rnd = String(Math.floor(Math.random() * 900 + 100));
-  return `PRO-${y}${m}${day}-${rnd}`;
-}
+const LEGACY_DEFAULT_TERMS = [
+  "1.- Duración de la oferta: 15 días.",
+  "2.- Anticipo del 50% antes de la producción / ejecución del servicio.",
+  "3.- Entregado el producto o ejecutado el servicio no existen devoluciones.",
+  "4.- Precios sujetos a disponibilidad y confirmación.",
+  "5.- Cambios fuera de alcance se cotizan adicionalmente.",
+].join("\n");
 
 async function urlToDataURL(url: string): Promise<string | null> {
   try {
@@ -208,14 +205,18 @@ async function urlToDataURL(url: string): Promise<string | null> {
 }
 
 export default function CotizacionPRO() {
-  const [companyProfile, setCompanyProfile] = useState<QuoteCompanyProfile>(DEFAULT_QUOTE_COMPANY_PROFILE);
+  const [companyProfile, setCompanyProfile] = useState<QuoteCompanyProfile>(() => mapQuoteCompanyProfile(null));
+  const [companyProfileLoading, setCompanyProfileLoading] = useState(true);
   const [tab, setTab] = useState<"nueva" | "historial">("nueva");
 
   const [quoteId, setQuoteId] = useState<string | null>(null);
 
-  const [quoteNo, setQuoteNo] = useState(genQuoteNo());
-  const [dateStr, setDateStr] = useState(new Date().toISOString().slice(0, 10));
+  const [quoteNo, setQuoteNo] = useState("");
+  const [dateStr, setDateStr] = useState(() => new Date().toLocaleDateString("sv-SE", { timeZone: "America/Guayaquil" }));
   const [validDays, setValidDays] = useState(15);
+  const quoteValidity = Math.trunc(validDays) > 0 ? Math.trunc(validDays) : 15;
+  const [photoUploads, setPhotoUploads] = useState<Set<number>>(() => new Set());
+  const [savingQuote, setSavingQuote] = useState(false);
 
   const [clientName, setClientName] = useState("");
   const [clientId, setClientId] = useState("");
@@ -235,25 +236,18 @@ export default function CotizacionPRO() {
   const [delivery, setDelivery] = useState("");
   const [paid, setPaid] = useState("");
 
-  const [terms, setTerms] = useState(
-    [
-      "1.- Duración de la oferta: 15 días.",
-      "2.- Anticipo del 50% antes de la producción / ejecución del servicio.",
-      "3.- Entregado el producto o ejecutado el servicio no existen devoluciones.",
-      "4.- Precios sujetos a disponibilidad y confirmación.",
-      "5.- Cambios fuera de alcance se cotizan adicionalmente.",
-    ].join("\n")
-  );
+  const [terms, setTerms] = useState("");
 
   const [notes, setNotes] = useState("Gracias por preferirnos.");
 
+  const nextLineId = useRef(1);
   const [items, setItems] = useState<Item[]>([
-    { qty: "1", description: "", unit: "", incl_vat: true },
+    { editorId: 0, qty: "1", description: "", unit: "", incl_vat: true },
   ]);
   const [inventoryCatalog, setInventoryCatalog] = useState<InventoryEntry[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
-  const saveQuoteRef = useRef<Promise<{ id: string | null; pdf_url: string | null } | void> | null>(null);
+  const saveQuoteRef = useRef<Promise<{ id: string; number: string; pdf_url: string | null; pdf_revision: string } | void> | null>(null);
   const [receiptId, setReceiptId] = useState<string | null>(null);
   const [receiptNo, setReceiptNo] = useState("");
   const [receiptStatus, setReceiptStatus] = useState<ReceiptStatus>("PENDIENTE_PAGO");
@@ -281,8 +275,9 @@ export default function CotizacionPRO() {
         .eq("id", "default")
         .maybeSingle();
 
-      if (!active || !data) return;
-      setCompanyProfile(mapQuoteCompanyProfile(data as Partial<QuoteCompanyProfile>));
+      if (!active) return;
+      setCompanyProfile(mapQuoteCompanyProfile(data as Partial<QuoteCompanyProfile> | null));
+      setCompanyProfileLoading(false);
     })();
 
     return () => {
@@ -538,6 +533,10 @@ export default function CotizacionPRO() {
   const applyProductToLine = (idx: number, product: (typeof productCatalog)[number]) => {
     updateItem(idx, {
       description: product.product_name,
+      code: product.product_sku || "",
+      details: product.description || "",
+      presentation: "",
+      image_url: "",
       product_id: product.product_id,
       product_name: product.product_name,
       variant_id: undefined,
@@ -556,6 +555,10 @@ export default function CotizacionPRO() {
     const netUnit = grossToNet(entry.sale_price, ivaRate);
     updateItem(idx, {
       description: entry.variant_name,
+      code: entry.attributes.SKU || entry.product_sku || "",
+      details: [entry.description, catalogAttributeSummary(cleanVariantAttributes(entry.attributes))].filter(Boolean).join("\n"),
+      presentation: entry.attributes.Presentación || entry.attributes.Unidad || "",
+      image_url: entry.attributes.image_url || entry.attributes.imagen || entry.attributes.Imagen || "",
       product_id: entry.product_id,
       product_name: entry.product_name,
       unit: netUnit ? netUnit.toFixed(2) : "",
@@ -587,7 +590,11 @@ export default function CotizacionPRO() {
       variant_id: matches.length === 1 ? matches[0].variant_id : undefined,
       unit: netUnit ? netUnit.toFixed(2) : "",
       sku: selectedProduct.product_sku || undefined,
-      description: matches.length === 1 ? matches[0].variant_name : selectedProduct.product_name,
+      description: selectedProduct.product_name,
+      code: selectedProduct.product_sku || "",
+      details: selectedProduct.description || "",
+      presentation: "",
+      image_url: "",
     });
 
     if (matches.length === 1) {
@@ -682,11 +689,10 @@ export default function CotizacionPRO() {
 
   const exportingRef = useRef(false);
 
-  const buildQuotePayload = (pdf_url?: string | null) => ({
+  const buildQuotePayload = () => ({
     quote: {
-      quote_no: quoteNo,
       date: dateStr,
-      valid_days: integerValue(validDays, 15),
+      valid_days: quoteValidity,
       client_name: clientName,
       client_id: clientId,
       client_phone: clientPhone,
@@ -698,24 +704,19 @@ export default function CotizacionPRO() {
       paid: decimalValue(paid),
       terms,
       notes,
-      pdf_url: pdf_url ?? undefined,
+      pdf_url: null,
     },
     items: items.map((it) => ({
       qty: decimalValue(it.qty),
       description: it.description,
+      code: it.code,
+      details: it.details,
+      presentation: it.presentation,
+      image_url: it.image_url,
       unit: decimalValue(it.unit),
       incl_vat: it.incl_vat,
     })),
   });
-
-  const findQuoteByNumber = async (number: string) => {
-    const response = await fetch(`/api/quotes?quote_no=${encodeURIComponent(number)}`);
-    const json = await response.json();
-    if (!response.ok) {
-      throw new Error(json.error || "No pude buscar la cotizacion existente.");
-    }
-    return json?.data?.quote ?? null;
-  };
 
   const resetReceiptDraft = () => {
     setReceiptId(null);
@@ -743,172 +744,56 @@ export default function CotizacionPRO() {
     setDeliveryTime(receipt.delivery_time || "");
   };
 
-  const buildPDF = async () => {
-    const doc = new jsPDF("p", "mm", "a4");
-    const pageW = doc.internal.pageSize.getWidth();
-    const margin = 12;
-
-    const logo = await urlToDataURL(companyProfile.logo_url || COMPANY.logoPath);
-    const seal = await urlToDataURL(COMPANY.sealPath);
-    const sign = await urlToDataURL(COMPANY.signPath);
-    const accentBlue = hexToRgb(companyProfile.accent_blue);
-
-    doc.setFillColor(...accentBlue);
-    doc.rect(0, 0, pageW, 8, "F");
-
-    const y = 18;
-
-    if (logo) doc.addImage(logo, "PNG", margin, y - 8, 32, 32);
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("COTIZACIÓN / PROFORMA", margin + (logo ? 38 : 0), y);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    const companyLines = [
-      companyProfile.name,
-      companyProfile.ruc,
-      companyProfile.address,
-      companyProfile.city,
-      companyProfile.phone,
-      companyProfile.email,
-      companyProfile.website,
-    ].filter(Boolean);
-
-    companyLines.forEach((l, i) => doc.text(String(l), margin + (logo ? 38 : 0), y + 6 + i * 4));
-
-    const boxW = 72;
-    const boxX = pageW - margin - boxW;
-    const boxY = 14;
-    doc.setDrawColor(30);
-    doc.setLineWidth(0.3);
-    doc.rect(boxX, boxY, boxW, 28);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("DATOS", boxX + 4, boxY + 6);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`N°: ${quoteNo}`, boxX + 4, boxY + 12);
-    doc.text(`Fecha: ${dateStr}`, boxX + 4, boxY + 17);
-    doc.text(`Validez: ${validDays} días`, boxX + 4, boxY + 22);
-
-    const clientY = 52;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("DATOS DEL CLIENTE", margin, clientY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.rect(margin, clientY + 3, pageW - margin * 2, 22);
-
-    const leftX = margin + 3;
-    doc.text(`Nombre: ${clientName || "-"}`, leftX, clientY + 9);
-    doc.text(`CI/RUC: ${clientId || "-"}`, pageW / 2, clientY + 9);
-    doc.text(`Teléfono: ${clientPhone || "-"}`, leftX, clientY + 14);
-    doc.text(`Email: ${clientEmail || "-"}`, pageW / 2, clientY + 14);
-    doc.text(`Dirección: ${clientAddress || "-"}`, leftX, clientY + 19);
-
-    const tableY = clientY + 30;
-
-    autoTable(doc, {
-      startY: tableY,
-      head: [["Cant.", "Descripción", "P. Unitario", "P.U. con IVA", "Total"]],
-      body: totals.lines.map((l) => [
-        String(l.qty),
-        l.description || "-",
-        `$ ${money(l.unit)}`,
-        `$ ${money(l.unitWithVat)}`,
-        `$ ${money(l.total)}`,
-      ]),
-      styles: { font: "helvetica", fontSize: 9, cellPadding: 2.2, lineWidth: 0.1 },
-      headStyles: {
-        fillColor: [245, 248, 255],
-        textColor: [10, 20, 40],
-        fontStyle: "bold",
-        lineWidth: 0.1,
-      },
-      columnStyles: {
-        0: { cellWidth: 14, halign: "center" },
-        1: { cellWidth: 88 },
-        2: { cellWidth: 26, halign: "right" },
-        3: { cellWidth: 28, halign: "right" },
-        4: { cellWidth: 28, halign: "right" },
-      },
+  const buildPDF = async (number = quoteNo) => {
+    const imageLoads = new Map<string, Promise<string | null>>();
+    const photos = items.map(({ image_url }) => {
+      if (!image_url) return Promise.resolve(null);
+      const existing = imageLoads.get(image_url);
+      if (existing) return existing;
+      const load = loadQuoteImage(image_url, 300);
+      imageLoads.set(image_url, load);
+      return load;
     });
-
-    const afterTableY = ((doc as any).lastAutoTable?.finalY ?? tableY + 40) + 6;
-
-    const totalsBoxW = 82;
-    const totalsBoxX = pageW - margin - totalsBoxW;
-    const totalsBoxY = afterTableY;
-
-    doc.rect(totalsBoxX, totalsBoxY, totalsBoxW, 48);
-
-    const tXLabel = totalsBoxX + 4;
-    const tXVal = totalsBoxX + totalsBoxW - 4;
-
-    const line = (label: string, value: string, yy: number, bold = false) => {
-      doc.setFont("helvetica", bold ? "bold" : "normal");
-      doc.text(label, tXLabel, yy);
-      doc.text(value, tXVal, yy, { align: "right" });
-    };
-
-    doc.setFontSize(9);
-    let ty = totalsBoxY + 6;
-    line("Total parcial:", `$ ${money(totals.subtotal)}`, ty);
-    ty += 5;
-    line("Descuento:", `- $ ${money(totals.disc)}`, ty);
-    ty += 5;
-    line("Neto:", `$ ${money(totals.neto)}`, ty, true);
-    ty += 5;
-    line(`IVA (${Math.round(ivaRate * 100)}%):`, `$ ${money(totals.iva)}`, ty);
-    ty += 5;
-    line("Envío / Delivery:", `$ ${money(totals.del)}`, ty);
-    ty += 5;
-    line("TOTAL FINAL:", `$ ${money(totals.totalFinal)}`, ty, true);
-    ty += 6;
-    line("Pagado:", `$ ${money(totals.paidVal)}`, ty);
-    ty += 5;
-    line("Saldo:", `$ ${money(totals.saldo)}`, ty, true);
-
-    let textY = totalsBoxY + 54;
-    const contentWidth = pageW - margin * 2;
-    const noteLines = doc.splitTextToSize(notes || "-", contentWidth);
-    const termsLines = doc.splitTextToSize((terms || "-").trim(), contentWidth);
-    const lineHeight = 4.2;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("NOTAS", margin, textY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(noteLines, margin, textY + 5);
-
-    textY += 5 + noteLines.length * lineHeight + 6;
-    const projectedTermsBottom = textY + 5 + termsLines.length * lineHeight;
-
-    if (projectedTermsBottom > 252) {
-      doc.addPage();
-      textY = 24;
+    const [logo, linePhotos] = await Promise.all([
+      loadQuoteImage(companyProfile.logo_url),
+      Promise.all(photos),
+    ]);
+    return generateQuotePDF({
+      number,
+      date: dateStr,
+      validDays: quoteValidity,
+      company: companyProfile,
+      customer: { name: clientName, id: clientId, phone: clientPhone, email: clientEmail, address: clientAddress },
+      lines: totals.lines,
+      notes,
+      terms: terms.replace(/\r\n/g, "\n").trim() === LEGACY_DEFAULT_TERMS ? "" : terms,
+      ivaRate,
+      totals,
+      logo,
+      photos: linePhotos,
+    });
+  };
+  const printQuote = async () => {
+    if (exportingRef.current) return;
+    const preview = window.open("about:blank", "_blank");
+    if (!preview) {
+      alert("Permite las ventanas emergentes para abrir el PDF de impresión.");
+      return;
     }
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("TERMINOS Y CONDICIONES", margin, textY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(termsLines, margin, textY + 5);
-
-    const footerY = 270;
-    if (sign) doc.addImage(sign, "PNG", pageW - margin - 55, footerY - 18, 50, 18);
-    if (seal) doc.addImage(seal, "PNG", pageW - margin - 28, footerY - 8, 24, 24);
-
-    doc.setFontSize(8);
-    doc.setTextColor(120);
-    doc.text(`${companyProfile.name} — Documento generado desde HST Contabilidad`, margin, 289);
-    doc.setTextColor(0);
-
-    return doc;
+    preview.opener = null;
+    exportingRef.current = true;
+    try {
+      const doc = await buildPDF();
+      doc.autoPrint({ variant: "javascript" });
+      const url = URL.createObjectURL(doc.output("blob"));
+      preview.location.replace(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 300_000);
+    } catch {
+      preview.close();
+      alert("No se pudo preparar el PDF de impresión.");
+    } finally {
+      exportingRef.current = false;
+    }
   };
 
   const downloadPDF = async () => {
@@ -916,7 +801,9 @@ export default function CotizacionPRO() {
     exportingRef.current = true;
     try {
       const doc = await buildPDF();
-      doc.save(`${quoteNo}.pdf`);
+      doc.save(`${quoteNo || "cotizacion-borrador"}.pdf`);
+    } catch {
+      alert("No se pudo preparar el PDF de la cotización.");
     } finally {
       exportingRef.current = false;
     }
@@ -1326,14 +1213,14 @@ export default function CotizacionPRO() {
     }
   };
 
-  const uploadPDFandGetUrl = async (): Promise<string | null> => {
+  const uploadPDFandGetUrl = async (number: string, id: string): Promise<string | null> => {
     const sb = supabaseBrowser();
-    const doc = await buildPDF();
+    const doc = await buildPDF(number);
     const blob = doc.output("blob") as unknown as Blob;
-    const path = `quotes/${quoteNo}.pdf`;
+    const path = `quotes/${id}/${crypto.randomUUID()}.pdf`;
 
     const { error } = await sb.storage.from("docs").upload(path, blob, {
-      upsert: true,
+      upsert: false,
       contentType: "application/pdf",
     });
 
@@ -1462,60 +1349,68 @@ export default function CotizacionPRO() {
   };
 
   const saveQuote = async (alsoUploadPdf: boolean) => {
+    if (photoUploads.size) {
+      alert("Espera a que termine la carga de imágenes.");
+      return;
+    }
     if (saveQuoteRef.current) return saveQuoteRef.current;
 
     const run = async () => {
-      let pdf_url: string | null = null;
-      if (alsoUploadPdf) pdf_url = await uploadPDFandGetUrl();
-
-      const payload = buildQuotePayload(pdf_url);
-
       const endpoint = quoteId ? `/api/quotes/${quoteId}` : "/api/quotes";
-      const method = quoteId ? "PATCH" : "POST";
-      let res = await fetch(endpoint, {
-        method,
+      const res = await fetch(endpoint, {
+        method: quoteId ? "PATCH" : "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(buildQuotePayload()),
       });
-
-      let json = await res.json();
-
-      if (!res.ok && !quoteId && String(json?.error || "").includes("quotes_quote_no_key")) {
-        const existing = await findQuoteByNumber(quoteNo);
-        if (existing?.id) {
-          setQuoteId(existing.id);
-          res = await fetch(`/api/quotes/${existing.id}`, {
-            method: "PATCH",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-          json = await res.json();
-        }
-      }
-
+      const json = await res.json();
       if (!res.ok) {
         alert(json.error || "Error guardando cotizacion");
         return;
       }
 
-      const id = json?.data?.quote?.id ?? quoteId ?? null;
+      const saved = json.data.quote;
+      const id = String(saved.id);
+      const number = String(saved.quote_no);
       setQuoteId(id);
-      if (json?.data?.quote?.quote_no) setQuoteNo(json.data.quote.quote_no);
+      setQuoteNo(number);
       if (saveCustomerEnabled) {
         await saveCustomerFromQuote();
       } else {
-        setCustomerSyncStatus("Cotizacion guardada sin actualizar la base de clientes.");
+        setCustomerSyncStatus("Cotización guardada sin actualizar la base de clientes.");
       }
 
-      alert(alsoUploadPdf ? "Guardado + PDF subido (link listo para compartir)." : "Cotizacion guardada.");
-      return { id, pdf_url };
+      let pdf_url: string | null = null;
+      if (alsoUploadPdf) {
+        pdf_url = await uploadPDFandGetUrl(number, id);
+        if (pdf_url) {
+          const response = await fetch(`/api/quotes/${id}`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ quote: { pdf_url }, pdf_revision: saved.pdf_revision }),
+          });
+          if (!response.ok) {
+            const result = await response.json();
+            alert(result.error || "Cotización guardada. No se pudo asociar el PDF.");
+            pdf_url = null;
+          }
+        }
+      }
+      if (!alsoUploadPdf || pdf_url) {
+        alert(alsoUploadPdf ? "Guardado + PDF subido (link listo para compartir)." : "Cotización guardada.");
+      }
+      return { id, number, pdf_url, pdf_revision: String(saved.pdf_revision) };
     };
 
+    setSavingQuote(true);
     saveQuoteRef.current = run();
     try {
       return await saveQuoteRef.current;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "No se pudo completar el guardado.");
+
     } finally {
       saveQuoteRef.current = null;
+      setSavingQuote(false);
     }
   };
 
@@ -1569,6 +1464,11 @@ export default function CotizacionPRO() {
 
     setItems(
       (its || []).map((x) => ({
+        editorId: nextLineId.current++,
+        code: x.code ?? "",
+        details: x.details ?? "",
+        presentation: x.presentation ?? "",
+        image_url: x.image_url ?? "",
         qty: x.qty != null ? String(x.qty) : "1",
         description: String(x.description ?? ""),
         unit: x.unit != null && Number(x.unit) !== 0 ? String(x.unit) : "",
@@ -1581,7 +1481,7 @@ export default function CotizacionPRO() {
 
   const duplicateAsNew = () => {
     setQuoteId(null);
-    setQuoteNo(genQuoteNo());
+    setQuoteNo("");
     alert("✅ Duplicado listo. Guarda como nueva cotización.");
   };
 
@@ -1634,36 +1534,14 @@ export default function CotizacionPRO() {
     const phone = normalizeWhatsappPhone(clientPhone);
     if (!phone) return alert("Falta el telefono del cliente.");
 
-    let link: string | null = null;
-    let activeId = quoteId;
-
-    if (!activeId) {
-      const result = await saveQuote(true);
-      activeId = result?.id ?? null;
-      link = result?.pdf_url ?? null;
-    }
-
-    if (activeId && !link) {
-      const r = await fetch(`/api/quotes/${activeId}`);
-      const j = await r.json();
-      if (r.ok) link = j?.data?.quote?.pdf_url || null;
-    }
-    if (!link) link = await uploadPDFandGetUrl();
-
-    if (activeId && link) {
-      await fetch(`/api/quotes/${activeId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ quote: { pdf_url: link } }),
-      });
-    }
-
+    const saved = await saveQuote(true);
+    if (!saved?.pdf_url) return;
     const msg = [
-      `*${companyProfile.name}*`,
-      `Cotización: *${quoteNo}*`,
+      companyProfile.name ? `*${companyProfile.name}*` : "",
+      `Cotización: *${saved.number}*`,
       `Cliente: ${clientName || "-"}`,
       `Total: $ ${money(totals.totalFinal)}`,
-      link ? `PDF: ${link}` : "",
+      `PDF: ${saved.pdf_url}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -1675,36 +1553,12 @@ export default function CotizacionPRO() {
   const emailSend = async () => {
     if (!clientEmail?.trim()) return alert("Falta el email del cliente.");
 
-    let link: string | null = null;
-    let activeId = quoteId;
-
-    if (!activeId) {
-      const result = await saveQuote(true);
-      activeId = result?.id ?? null;
-      link = result?.pdf_url ?? null;
-    }
-
-    try {
-      if (!activeId) throw new Error("No pude preparar la cotización.");
-      const r = await fetch(`/api/quotes/${activeId}`);
-      const j = await r.json();
-      if (r.ok) link = j?.data?.quote?.pdf_url || null;
-    } catch {}
-
-    if (!link) link = await uploadPDFandGetUrl();
-
-    if (activeId && link) {
-      await fetch(`/api/quotes/${activeId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ quote: { pdf_url: link } }),
-      });
-    }
-
-    const r = await fetch(`/api/quotes/${activeId}/email`, {
+    const saved = await saveQuote(true);
+    if (!saved?.pdf_url) return;
+    const r = await fetch(`/api/quotes/${saved.id}/email`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: clientEmail, pdf_url: link }),
+      body: JSON.stringify({ email: clientEmail, pdf_revision: saved.pdf_revision }),
     });
 
     const j = await r.json();
@@ -1712,6 +1566,73 @@ export default function CotizacionPRO() {
     if (!r.ok) return alert(j.error || "Error enviando email");
 
     alert("✅ Cotización enviada al correo del cliente.");
+  };
+
+  const addItem = () => {
+    const editorId = nextLineId.current++;
+    setItems((previous) => [...previous, { editorId, qty: "1", description: "", unit: "", incl_vat: true }]);
+  };
+
+  const uploadLinePhoto = async (file: File, editorId: number) => {
+    const source = URL.createObjectURL(file);
+    setPhotoUploads((current) => new Set(current).add(editorId));
+    try {
+      const png = await loadQuoteImage(source);
+      if (!png) throw new Error("No se pudo leer la imagen. Elige un archivo PNG, JPG o WebP.");
+      const sb = supabaseBrowser();
+      const path = `quote-items/${crypto.randomUUID()}.png`;
+      const blob = await (await fetch(png)).blob();
+      const { error } = await sb.storage.from("docs").upload(path, blob, { contentType: "image/png" });
+      if (error) throw new Error(error.message);
+      const { data } = sb.storage.from("docs").getPublicUrl(path);
+      setItems((current) => current.map((item) =>
+        item.editorId === editorId ? { ...item, image_url: data.publicUrl } : item,
+      ));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "No se pudo subir la imagen.");
+    } finally {
+      URL.revokeObjectURL(source);
+      setPhotoUploads((current) => new Set([...current].filter((id) => id !== editorId)));
+    }
+  };
+
+  const renderLineDetails = (idx: number) => {
+    const item = items[idx];
+    const uploading = photoUploads.has(item.editorId);
+    return (
+      <details style={{ marginTop: 8 }}>
+        <summary style={{ cursor: "pointer" }}>Código, presentación e imagen</summary>
+        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+          <label>
+            <span style={label()}>Código</span>
+            <input style={input()} value={item.code ?? ""} onChange={(e) => updateItem(idx, { code: e.target.value })} />
+          </label>
+          <label>
+            <span style={label()}>Detalles del producto</span>
+            <textarea style={textarea()} rows={2} value={item.details ?? ""} onChange={(e) => updateItem(idx, { details: e.target.value })} />
+          </label>
+          <label>
+            <span style={label()}>Unidad / presentación</span>
+            <input style={input()} value={item.presentation ?? ""} placeholder="Ej. Caja de 10"
+              onChange={(e) => updateItem(idx, { presentation: e.target.value })} />
+          </label>
+          <label>
+            <span style={label()}>{uploading ? "Subiendo imagen…" : "Imagen referencial"}</span>
+            <input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={(e) => {
+              const file = e.currentTarget.files?.[0];
+              e.currentTarget.value = "";
+              if (file) void uploadLinePhoto(file, item.editorId);
+            }} />
+          </label>
+          {item.image_url ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <a href={item.image_url} target="_blank" rel="noreferrer">Ver imagen</a>
+              <button type="button" style={btn()} disabled={uploading} onClick={() => updateItem(idx, { image_url: "" })}>Quitar imagen</button>
+            </div>
+          ) : null}
+        </div>
+      </details>
+    );
   };
 
   const removeItem = (idx: number) => setItems((p) => p.filter((_, i) => i !== idx));
@@ -1883,12 +1804,12 @@ export default function CotizacionPRO() {
           <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr", gap: 10, marginTop: 14 }} className="mobile-quotes-top-grid">
             <div style={card()}>
               <label style={label()}>N° Cotización</label>
-              <input style={input()} value={quoteNo} onChange={(e) => setQuoteNo(e.target.value)} />
+              <input style={input()} value={quoteNo} placeholder="Se asigna al guardar" readOnly />
               <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }} className="mobile-quotes-buttons">
                 <button
                   onClick={() => {
                     setQuoteId(null);
-                    setQuoteNo(genQuoteNo());
+                    setQuoteNo("");
                   }}
                   style={btn()}
                 >
@@ -2215,17 +2136,20 @@ export default function CotizacionPRO() {
                   ) : null}
                 </div>
 
-                <button onClick={downloadPDF} style={btnPrimary()}>
+                <button onClick={downloadPDF} style={btnPrimary()} disabled={companyProfileLoading || photoUploads.size > 0}>
                   Descargar PDF
                 </button>
-                <button onClick={whatsappShare} style={btnPrimary()}>
+                <button onClick={printQuote} style={btn()} disabled={companyProfileLoading || photoUploads.size > 0}>
+                  Imprimir PDF
+                </button>
+                <button onClick={whatsappShare} style={btnPrimary()} disabled={companyProfileLoading || savingQuote || photoUploads.size > 0}>
                   Compartir por WhatsApp
                 </button>
 
-                <button onClick={() => saveQuote(false)} style={btn()}>
+                <button onClick={() => saveQuote(false)} style={btn()} disabled={savingQuote || photoUploads.size > 0}>
                   Guardar
                 </button>
-                <button onClick={() => saveQuote(true)} style={btn()}>
+                <button onClick={() => saveQuote(true)} style={btn()} disabled={companyProfileLoading || savingQuote || photoUploads.size > 0}>
                   Guardar y subir PDF
                 </button>
 
@@ -2233,7 +2157,7 @@ export default function CotizacionPRO() {
                   {receiptId ? "Actualizar recibo" : "Convertir a recibo"}
                 </button>
 
-                <button onClick={emailSend} style={btnPrimary()}>
+                <button onClick={emailSend} style={btnPrimary()} disabled={companyProfileLoading || savingQuote || photoUploads.size > 0}>
                   Enviar email
                 </button>
               </div>
@@ -2243,7 +2167,7 @@ export default function CotizacionPRO() {
           <div style={{ ...card(), marginTop: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }} className="mobile-quotes-toolbar">
               <div style={{ fontWeight: 900 }}>Detalle</div>
-              <button onClick={() => setItems((p) => [...p, { qty: "1", description: "", unit: "", incl_vat: true }])} style={btn()}>
+              <button onClick={() => addItem()} style={btn()}>
                 + Agregar línea
               </button>
             </div>
@@ -2264,7 +2188,7 @@ export default function CotizacionPRO() {
 
                 <tbody>
                   {totals.lines.map((l, idx) => (
-                    <tr key={idx} style={{ borderBottom: "1px solid #1f2a44" }}>
+                    <tr key={items[idx].editorId} style={{ borderBottom: "1px solid #1f2a44" }}>
                       <Td>
                         <input
                           style={input({ width: 80 })}
@@ -2285,6 +2209,7 @@ export default function CotizacionPRO() {
                             placeholder="Ej. Caja de guantes de nitrilo"
                           />
                           {renderCatalogAssist(idx)}
+                          {renderLineDetails(idx)}
                         </div>
                       </Td>
 
@@ -2324,7 +2249,7 @@ export default function CotizacionPRO() {
 
               <div className="mobile-quotes-mobile-list" style={{ display: "none", marginTop: 10 }}>
                 {totals.lines.map((l, idx) => (
-                  <div key={idx} style={mobileCard()}>
+                  <div key={items[idx].editorId} style={mobileCard()}>
                     <div style={mobileCardTitleRow}>
                       <div style={mobileCardTitle}>{items[idx].description || `Linea ${idx + 1}`}</div>
                       <button onClick={() => removeItem(idx)} style={dangerBtn()}>
@@ -2353,7 +2278,7 @@ export default function CotizacionPRO() {
                           onChange={(e) => updateItem(idx, { description: e.target.value })}
                           placeholder="Ej. Caja de guantes de nitrilo"
                         />
-                        <div style={{ marginTop: 8 }}>{renderCatalogAssist(idx)}</div>
+                        <div style={{ marginTop: 8 }}>{renderCatalogAssist(idx)}{renderLineDetails(idx)}</div>
                       </div>
 
                       <div>
@@ -2401,7 +2326,7 @@ export default function CotizacionPRO() {
               <textarea style={textarea()} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
             <div style={card()}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>Terminos y condiciones</div>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>Condiciones adicionales</div>
               <textarea style={textarea()} value={terms} onChange={(e) => setTerms(e.target.value)} />
             </div>
           </div>

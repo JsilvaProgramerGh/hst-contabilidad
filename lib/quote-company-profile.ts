@@ -27,14 +27,14 @@ export const DEFAULT_QUOTE_COMPANY_PROFILE: QuoteCompanyProfile = {
 export function mapQuoteCompanyProfile(row: Partial<QuoteCompanyProfile> | null | undefined): QuoteCompanyProfile {
   return {
     id: row?.id || DEFAULT_QUOTE_COMPANY_PROFILE.id,
-    name: row?.name || DEFAULT_QUOTE_COMPANY_PROFILE.name,
-    ruc: row?.ruc || DEFAULT_QUOTE_COMPANY_PROFILE.ruc,
-    address: row?.address || DEFAULT_QUOTE_COMPANY_PROFILE.address,
-    city: row?.city || DEFAULT_QUOTE_COMPANY_PROFILE.city,
-    phone: row?.phone || DEFAULT_QUOTE_COMPANY_PROFILE.phone,
-    email: row?.email || DEFAULT_QUOTE_COMPANY_PROFILE.email,
-    website: row?.website || DEFAULT_QUOTE_COMPANY_PROFILE.website,
-    logo_url: row?.logo_url || DEFAULT_QUOTE_COMPANY_PROFILE.logo_url,
+    name: row?.name ?? "",
+    ruc: row?.ruc ?? "",
+    address: row?.address ?? "",
+    city: row?.city ?? "",
+    phone: row?.phone ?? "",
+    email: row?.email ?? "",
+    website: row?.website ?? "",
+    logo_url: row?.logo_url ?? "",
     accent_blue: row?.accent_blue || DEFAULT_QUOTE_COMPANY_PROFILE.accent_blue,
   };
 }
