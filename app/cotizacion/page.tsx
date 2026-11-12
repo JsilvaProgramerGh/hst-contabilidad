@@ -6,6 +6,7 @@ import autoTable from "jspdf-autotable";
 import { generateQuotePDF } from "@/lib/pdf/quotePdf";
 import { loadQuoteImage } from "@/lib/pdf/quote-images";
 import type { QuoteLineDetails } from "@/lib/quote-line";
+import { parseProductImport, PRODUCT_IMPORT_HEADERS, type ProductImport } from "@/lib/quote-product-import";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
   DEFAULT_QUOTE_COMPANY_PROFILE,
@@ -240,6 +241,12 @@ export default function CotizacionPRO() {
 
   const [notes, setNotes] = useState("Gracias por preferirnos.");
 
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pastedProducts, setPastedProducts] = useState("");
+  const [importPreview, setImportPreview] = useState<ProductImport | null>(null);
+  const [applySupplierPrices, setApplySupplierPrices] = useState(true);
+  const [importedCount, setImportedCount] = useState(0);
+  const importConfirmed = useRef(false);
   const nextLineId = useRef(1);
   const [items, setItems] = useState<Item[]>([
     { editorId: 0, qty: "1", description: "", unit: "", incl_vat: true },
@@ -1440,6 +1447,8 @@ export default function CotizacionPRO() {
     const q = json.data.quote;
     const its = json.data.items as any[];
 
+    setPasteOpen(false);
+    setImportedCount(0);
     setQuoteId(q.id);
     setQuoteNo(q.quote_no);
     setDateStr(String(q.date));
@@ -1566,6 +1575,41 @@ export default function CotizacionPRO() {
     if (!r.ok) return alert(j.error || "Error enviando email");
 
     alert("✅ Cotización enviada al correo del cliente.");
+  };
+
+  const openProductImport = () => {
+    setPastedProducts("");
+    setImportPreview(null);
+    setApplySupplierPrices(true);
+    setImportedCount(0);
+    importConfirmed.current = false;
+    setPasteOpen(true);
+  };
+
+  const addImportedProducts = () => {
+    if (!importPreview?.products.length || importPreview.errors.length || importConfirmed.current) return;
+    importConfirmed.current = true;
+    const imported: Item[] = importPreview.products.map((product) => ({
+      editorId: nextLineId.current++,
+      code: product.code,
+      description: product.description,
+      details: product.details,
+      qty: product.qty,
+      presentation: product.presentation,
+      unit: applySupplierPrices ? product.supplierPrice ?? "" : "",
+      incl_vat: true,
+    }));
+    setItems((previous) => [
+      ...previous.filter((item) => item.editorId !== 0 || item.qty !== "1" || !item.incl_vat ||
+        Boolean(item.description || item.unit || item.code || item.details || item.presentation ||
+          item.image_url || item.product_id || item.product_name || item.variant_id || item.sku || item.selected_attrs) ||
+        photoUploads.has(item.editorId)),
+      ...imported,
+    ]);
+    setPastedProducts("");
+    setImportPreview(null);
+    setImportedCount(imported.length);
+    setPasteOpen(false);
   };
 
   const addItem = () => {
@@ -2167,10 +2211,85 @@ export default function CotizacionPRO() {
           <div style={{ ...card(), marginTop: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }} className="mobile-quotes-toolbar">
               <div style={{ fontWeight: 900 }}>Detalle</div>
-              <button onClick={() => addItem()} style={btn()}>
-                + Agregar línea
-              </button>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button type="button" onClick={addItem} style={btn()}>
+                  + Agregar línea
+                </button>
+                <button type="button" onClick={() => pasteOpen ? setPasteOpen(false) : openProductImport()} style={btn()} aria-expanded={pasteOpen} aria-controls={pasteOpen ? "quote-product-import" : undefined}>
+                  Pegar productos
+                </button>
+              </div>
             </div>
+
+            {importedCount > 0 && <p role="status">Líneas agregadas: {importedCount}.</p>}
+            {pasteOpen && (
+              <section id="quote-product-import" aria-label="Pegar productos" style={{ ...card(), marginBottom: 12 }}>
+                <label htmlFor="supplier-products" style={label()}>Productos separados por tabulaciones</label>
+                <p id="supplier-products-format" style={{ color: "#cbd5e1", fontSize: 13, margin: "4px 0 8px" }}>
+                  Pega el encabezado y un producto por línea. Solo el producto y la cantidad son obligatorios en cada fila.
+                  Usa números sin símbolo de moneda, por ejemplo 12,50 o 1.234,50. Escribe 1234 o 1.234,00 en vez de 1.234.
+                </p>
+                <pre style={{ fontSize: 12, overflowX: "auto", margin: "8px 0", whiteSpace: "pre" }}>{PRODUCT_IMPORT_HEADERS.join("\t")}</pre>
+                <textarea
+                  id="supplier-products"
+                  aria-describedby="supplier-products-format"
+                  style={{ ...textarea(), boxSizing: "border-box", minHeight: 96 }}
+                  value={pastedProducts}
+                  onChange={(event) => {
+                    setPastedProducts(event.target.value);
+                    setImportPreview(null);
+                    setApplySupplierPrices(true);
+                  }}
+                />
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                  <button type="button" style={btn()} onClick={() => setImportPreview(parseProductImport(pastedProducts))}>Previsualizar</button>
+                  <button type="button" style={btn()} onClick={() => setPasteOpen(false)}>Cancelar</button>
+                </div>
+                {importPreview && (
+                  <div style={{ marginTop: 12 }}>
+                    {importPreview.errors.length > 0 && (
+                      <div role="alert" style={{ color: "#fecaca" }}>
+                        Corrige todas las filas indicadas antes de agregar los productos.
+                        <ul>{importPreview.errors.map((error) => <li key={error}>{error}</li>)}</ul>
+                      </div>
+                    )}
+                    {importPreview.products.length > 0 && (
+                      <>
+                        <div style={{ overflow: "auto", maxHeight: 320 }}>
+                          <table style={{ width: "100%", minWidth: 680, borderCollapse: "collapse" }}>
+                            <caption style={{ textAlign: "left", marginBottom: 8 }}>Productos válidos: {importPreview.products.length}</caption>
+                            <thead>
+                              <tr>{PRODUCT_IMPORT_HEADERS.map((header) => (
+                                <Th key={header}>{header === "Precio unitario" ? "Precio del proveedor" : header}</Th>
+                              ))}</tr>
+                            </thead>
+                            <tbody>
+                              {importPreview.products.map((product, index) => (
+                                <tr key={index}>
+                                  <Td>{product.code}</Td>
+                                  <Td>{product.description}</Td>
+                                  <Td>{product.details}</Td>
+                                  <Td>{product.qty}</Td>
+                                  <Td>{product.presentation}</Td>
+                                  <Td>{product.supplierPrice ?? "Sin precio"}</Td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "12px 0" }}>
+                          <input type="checkbox" checked={applySupplierPrices} onChange={(event) => setApplySupplierPrices(event.target.checked)} />
+                          Importar los precios del proveedor como precios unitarios editables antes de IVA
+                        </label>
+                        <button type="button" style={btnPrimary()} onClick={addImportedProducts} disabled={importPreview.errors.length > 0}>
+                          Agregar {importPreview.products.length} {importPreview.products.length === 1 ? "producto" : "productos"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
 
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }} className="mobile-quotes-desktop-table">
