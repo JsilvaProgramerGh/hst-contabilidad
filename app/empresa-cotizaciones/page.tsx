@@ -4,13 +4,12 @@ import { ChangeEvent, CSSProperties, useEffect, useMemo, useState } from "react"
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
-  DEFAULT_QUOTE_COMPANY_PROFILE,
   mapQuoteCompanyProfile,
   type QuoteCompanyProfile,
 } from "@/lib/quote-company-profile";
 
 export default function EmpresaCotizacionesPage() {
-  const [profile, setProfile] = useState<QuoteCompanyProfile>(DEFAULT_QUOTE_COMPANY_PROFILE);
+  const [profile, setProfile] = useState<QuoteCompanyProfile>(() => mapQuoteCompanyProfile(null));
   const [status, setStatus] = useState("");
   const [tableReady, setTableReady] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -106,7 +105,7 @@ export default function EmpresaCotizacionesPage() {
 
     if (error) {
       setTableReady(false);
-      setStatus(`No se pudo guardar. Si falta la tabla, corre el SQL de C:\\Users\\julia\\hst-contabilidad\\docs\\quote-company-profile.sql. ${error.message}`);
+      setStatus(`No se pudo guardar. Si falta la tabla, corre el SQL de docs/quote-company-profile.sql. ${error.message}`);
       setSaving(false);
       return;
     }
@@ -123,7 +122,7 @@ export default function EmpresaCotizacionesPage() {
           <div style={eyebrow}>Marca de cotizaciones</div>
           <h1 style={title}>Logo y datos de empresa</h1>
           <p style={subtitle}>
-            Aquí cambiamos solo lo que aparece en cotizaciones, PDFs y etiquetas: logo, nombre, RUC, correo, teléfono y demás datos de cabecera.
+            Aquí cambiamos solo lo que aparece en cotizaciones, PDFs y etiquetas: logo, nombre, RUC, correo, WhatsApp y demás datos de cabecera.
           </p>
         </div>
         <Link href="/cotizacion" style={backLink}>
@@ -133,7 +132,7 @@ export default function EmpresaCotizacionesPage() {
 
       {!tableReady ? (
         <div style={warningCard}>
-          Falta preparar la tabla <code>quote_company_profile</code> en Supabase. Te dejé el SQL en <code>C:\Users\julia\hst-contabilidad\docs\quote-company-profile.sql</code>.
+          Falta preparar la tabla <code>quote_company_profile</code> en Supabase. Te dejé el SQL en <code>docs/quote-company-profile.sql</code>.
         </div>
       ) : null}
 
@@ -154,7 +153,7 @@ export default function EmpresaCotizacionesPage() {
               <input style={input} value={profile.email} onChange={(e) => setField("email", e.target.value)} />
             </Field>
 
-            <Field label="Teléfono">
+            <Field label="WhatsApp">
               <input style={input} value={profile.phone} onChange={(e) => setField("phone", e.target.value)} />
             </Field>
 
@@ -192,9 +191,6 @@ export default function EmpresaCotizacionesPage() {
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
             <button style={primaryButton} onClick={saveProfile} disabled={saving}>
               {saving ? "Guardando..." : "Guardar cambios"}
-            </button>
-            <button style={ghostButton} onClick={() => setProfile(DEFAULT_QUOTE_COMPANY_PROFILE)}>
-              Restablecer vista base
             </button>
           </div>
 
@@ -367,16 +363,6 @@ const primaryButton: CSSProperties = {
   background: "linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%)",
   color: "#f8fafc",
   fontWeight: 800,
-  cursor: "pointer",
-};
-
-const ghostButton: CSSProperties = {
-  padding: "12px 16px",
-  borderRadius: 14,
-  border: "1px solid rgba(148, 163, 184, 0.16)",
-  background: "rgba(15, 23, 37, 0.96)",
-  color: "#e2e8f0",
-  fontWeight: 700,
   cursor: "pointer",
 };
 
