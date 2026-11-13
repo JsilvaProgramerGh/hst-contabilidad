@@ -10,7 +10,12 @@ const border = "#cbd8e0";
 const margin = 15.5;
 const right = 194.5;
 const width = right - margin;
-const bottom = 269;
+const bottom = 273;
+const sectionHeight = 7;
+const labelHeight = 4;
+const fieldGap = 3;
+const valueLineHeight = 4.4;
+const writingHeight = 6.2;
 
 export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
@@ -57,47 +62,50 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
     }) : "";
     return formatted;
   };
-  function fieldRows(title: string, rows: [string, string][][], shaded = true) {
-    ensure((title ? 8 : 0) + 10);
-    if (title) {
-      if (shaded) {
-        doc.setFillColor(pale);
-        doc.roundedRect(margin, y, width, 8, 2, 2, "F");
-      }
-      draw(title, margin + (shaded ? 5 : 0), y + 5.6, 11, true);
-      y += 8;
-    }
-    for (const row of rows) {
+  function prepareRows(rows: [string, string][][]) {
+    return rows.map((row) => {
       const columnWidth = width / row.length;
       style();
       const columns = row.map(([label, value]) => ({
-        label, value: value.trim(),
+        label,
+        blank: !value.trim(),
         lines: doc.splitTextToSize(value.trim(), columnWidth - 10) as string[],
       }));
       const count = Math.max(1, ...columns.map(({ lines }) => lines.length));
-      const valueHeight = columns.some(({ value }) => !value) ? 6.2 : 4.4;
-      ensure(4.5 + valueHeight);
+      const firstHeight = columns.some(({ blank }) => blank) ? writingHeight : valueLineHeight;
+      return { columnWidth, columns, count, firstHeight, height: labelHeight + firstHeight + (count - 1) * valueLineHeight };
+    });
+  }
+
+  function fieldRows(title: string, rows: [string, string][][], shaded = true) {
+    const prepared = prepareRows(rows);
+    ensure((title ? sectionHeight : 0) + labelHeight + prepared[0].firstHeight);
+    if (title) {
       if (shaded) {
         doc.setFillColor(pale);
-        doc.rect(margin, y, width, 4.5, "F");
+        doc.roundedRect(margin, y, width, sectionHeight, 2, 2, "F");
       }
+      draw(title, margin + (shaded ? 5 : 0), y + 5, 11, true);
+      y += sectionHeight;
+    }
+    for (const { columnWidth, columns, count, firstHeight } of prepared) {
+      ensure(labelHeight + firstHeight);
+      if (shaded) doc.setFillColor(pale).rect(margin, y, width, labelHeight, "F");
       columns.forEach(({ label }, index) => draw(label, margin + index * columnWidth + (shaded ? 5 : 0), y + 3, 8, true, gray));
-      y += 4.5;
+      y += labelHeight;
       for (let line = 0; line < count; line++) {
-        ensure(valueHeight);
-        if (shaded) {
-          doc.setFillColor(pale);
-          doc.rect(margin, y, width, valueHeight, "F");
-        }
-        columns.forEach(({ lines, value }, index) => {
+        const height = line === 0 ? firstHeight : valueLineHeight;
+        ensure(height);
+        if (shaded) doc.setFillColor(pale).rect(margin, y, width, height, "F");
+        columns.forEach(({ lines, blank }, index) => {
           const x = margin + index * columnWidth + (shaded ? 5 : 0);
-          if (!value && line === 0) doc.setDrawColor(gray).setLineWidth(.15).line(x, y + 5, x + columnWidth - 10, y + 5);
-          else draw(lines[line] ?? "", x, y + 3.1);
+          if (blank && line === 0) doc.setDrawColor(gray).setLineWidth(.15).line(x, y + 5, x + columnWidth - 10, y + 5);
+          else if (lines[line]) draw(lines[line], x, y + 3.1);
         });
-        y += valueHeight;
+        y += height;
       }
     }
-    y += 4;
+    y += fieldGap;
   }
 
   style(24, true);
@@ -109,15 +117,15 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
   paragraph(guide.sender.name, brandX, 111 - brandX, 14, false, navy, "times");
   if (guide.sender.ruc) paragraph(`RUC ${guide.sender.ruc}`, brandX, 111 - brandX, 8, false, gray);
   if (guide.brand !== "agrosilva" && guide.sender.email) paragraph(guide.sender.email, brandX, 111 - brandX, 8, false, gray);
-  y = Math.max(y + 4, 33);
+  y = Math.max(y + 4, 29);
   doc.setDrawColor(border).line(margin, y, right, y);
-  y += 5.5;
+  y += 4;
 
   fieldRows("Despacho y transporte", [
     [["Remitente", guide.sender.name], ["Conductor / transportista", guide.vehicle.driver]],
     [["Punto de partida", guide.sender.origin], ["Identificación del conductor", guide.vehicle.driverId]],
-    [["Fecha de salida", formatDate(guide.dispatchDate)], ["Hora de salida", guide.dispatchTime]],
-    [["Tipo y color del vehículo", [guide.vehicle.vehicleType, guide.vehicle.color].filter(Boolean).join(" · ")], ["Placa", guide.vehicle.plate]],
+    [["Fecha de salida", formatDate(guide.dispatchDate)], ["Hora de salida", guide.dispatchTime], ["Placa", guide.vehicle.plate]],
+    [["Tipo y color del vehículo", [guide.vehicle.vehicleType, guide.vehicle.color].filter(Boolean).join(" · ")]],
   ]);
   fieldRows("Destino y entrega", [
     [["Empresa destinataria", guide.destination.company], ["RUC del destinatario", guide.destination.ruc]],
@@ -135,7 +143,7 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
     willDrawPage: ({ pageNumber }) => {
       if (pageNumber > 1) draw(["Guía de entrega", guide.number].filter(Boolean).join(" · "), margin, 12, 9, true);
     },
-    margin: { left: margin, right: margin, top: 17, bottom: 27 },
+    margin: { left: margin, right: margin, top: 17, bottom: doc.internal.pageSize.getHeight() - bottom },
     head: [["Código", "Producto y descripción", "Cantidad", "Presentación"]],
     body: items.map((item) => [item.code, [item.product, item.details].filter(Boolean).join("\n"), item.quantity, item.presentation]),
     didParseCell: ({ section, cell }) => {
@@ -147,7 +155,7 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
     theme: "striped",
     rowPageBreak: "avoid",
     showHead: "everyPage",
-    styles: { fontSize: 8.5, cellPadding: 2, textColor: navy, overflow: "linebreak", lineColor: border, lineWidth: { bottom: .15 } },
+    styles: { fontSize: 8.5, cellPadding: { top: 1.35, right: 2, bottom: 1.35, left: 2 }, textColor: navy, overflow: "linebreak", lineColor: border, lineWidth: { bottom: .15 } },
     headStyles: { fillColor: navy, textColor: "#ffffff" },
     bodyStyles: { fillColor: pale },
     alternateRowStyles: { fillColor: "#ffffff" },
@@ -155,18 +163,27 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
   });
   y = ((doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY) + 3;
 
-  ensure(48);
-  fieldRows("Constancia de recepción", [
-    [["Recibido por", guide.receivedBy]],
-    [["Fecha real de recepción", formatDate(guide.receivedDate)], ["Hora real de recepción", guide.receivedTime]],
-  ], false);
-  ensure(24);
-  doc.setDrawColor(border).roundedRect(margin, y, width, 21, 2, 2);
+  const receiptRows: [string, string][][] = [[
+    ["Recibido por", guide.receivedBy],
+    ["Fecha real de recepción", formatDate(guide.receivedDate)],
+    ["Hora real de recepción", guide.receivedTime],
+  ]];
+  const signatureHeight = 19;
+  const afterSignature = 3;
+  const observationsStart = 11;
+  const blankObservationHeight = 10;
+  const observationSpace = guide.observations.trim() ? valueLineHeight : blankObservationHeight;
+  const receiptHeight = sectionHeight + prepareRows(receiptRows).reduce((sum, row) => sum + row.height, 0) +
+    fieldGap + signatureHeight + afterSignature + observationsStart + observationSpace;
+  if (receiptHeight <= bottom - 21) ensure(receiptHeight);
+  fieldRows("Constancia de recepción", receiptRows, false);
+  ensure(signatureHeight + afterSignature);
+  doc.setDrawColor(border).roundedRect(margin, y, width, signatureHeight, 2, 2);
   draw("Firma o sello", margin + 4, y + 5, 8, true, gray);
-  if (guide.signature) image(guide.signature, margin + 45, y + 1, width - 50, 19);
-  else doc.line(margin + 45, y + 16, right - 5, y + 16);
-  y += 24;
-  ensure(14);
+  if (guide.signature) image(guide.signature, margin + 45, y + 1, width - 50, signatureHeight - 2);
+  else doc.line(margin + 45, y + 15, right - 5, y + 15);
+  y += signatureHeight + afterSignature;
+  ensure(observationsStart + observationSpace);
   const checks = [["conforme", "Recibido conforme"], ["observaciones", "Recibido con observaciones"]];
   checks.forEach(([value, label], index) => {
     const x = margin + index * 57;
@@ -174,7 +191,7 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
     if (guide.condition === value) draw("X", x + .4, y + 2.7, 8, true);
     draw(label, x + 5, y + 2.8, 8);
   });
-  y += 7;
+  y += 6;
   draw("Observaciones (faltantes, daños o entrega parcial)", margin, y + 3, 8, true, gray);
   y += 5;
   if (guide.observations.trim()) paragraph(guide.observations, margin, width);
