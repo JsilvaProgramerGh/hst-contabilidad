@@ -6,6 +6,8 @@ import autoTable from "jspdf-autotable";
 import { generateQuotePDF } from "@/lib/pdf/quotePdf";
 import { loadQuoteImage, loadQuoteLogo } from "@/lib/pdf/quote-images";
 import type { QuoteLineDetails } from "@/lib/quote-line";
+import SupplierProformas from "./supplier-proformas";
+import { quoteLineFromOffer, type SupplierOffer } from "@/lib/supplier-proformas";
 import { parseProductImport, PRODUCT_IMPORT_HEADERS, type ProductImport } from "@/lib/quote-product-import";
 import { findSavedCustomerName, getRucCandidate } from "@/lib/ruc-lookup";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -51,7 +53,7 @@ type InventoryEntry = {
   category_name: string | null;
   description: string | null;
   sale_price: number;
-  stock: number;
+  stock: number | null;
   attributes: Record<string, string>;
 };
 
@@ -251,6 +253,7 @@ export default function CotizacionPRO() {
 
   const [notes, setNotes] = useState("Gracias por preferirnos.");
 
+  const [proformasOpen, setProformasOpen] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pastedProducts, setPastedProducts] = useState("");
   const [importPreview, setImportPreview] = useState<ProductImport | null>(null);
@@ -567,7 +570,7 @@ export default function CotizacionPRO() {
             category_name: product.category_id ? (categoryMap.get(product.category_id) ?? null) : null,
             description: product.description,
             sale_price: Number(saleMap.get(variant.id) ?? 0),
-            stock: Number(stockMap.get(variant.id) ?? 0),
+            stock: stockMap.get(variant.id) ?? null,
             attributes,
           };
         })
@@ -1502,6 +1505,7 @@ export default function CotizacionPRO() {
 
     setPasteOpen(false);
     setImportedCount(0);
+    setProformasOpen(false);
     setQuoteId(q.id);
     setQuoteNo(q.quote_no);
     setDateStr(String(q.date));
@@ -1663,6 +1667,16 @@ export default function CotizacionPRO() {
     setImportPreview(null);
     setImportedCount(imported.length);
     setPasteOpen(false);
+  };
+
+  const addSupplierOffer = (offer: SupplierOffer) => {
+    const item = { ...quoteLineFromOffer(offer), editorId: nextLineId.current++ };
+    setItems((current) => [
+      ...current.filter((line) => line.editorId !== 0 || photoUploads.has(0) ||
+        Object.entries(line).some(([key, value]) => key !== "editorId" && key !== "qty" && key !== "incl_vat" && Boolean(value)) ||
+        line.qty !== "1" || !line.incl_vat),
+      item,
+    ]);
   };
 
   const addItem = () => {
@@ -2304,9 +2318,16 @@ export default function CotizacionPRO() {
                 <button type="button" onClick={() => pasteOpen ? setPasteOpen(false) : openProductImport()} style={btn()} aria-expanded={pasteOpen} aria-controls={pasteOpen ? "quote-product-import" : undefined}>
                   Pegar productos
                 </button>
+                <button type="button" style={btn()} aria-expanded={proformasOpen} onClick={() => {
+                  setProformasOpen(!proformasOpen);
+                  if (!proformasOpen && !inventoryCatalog.length) void loadInventoryCatalog();
+                }}>
+                  Proformas de proveedores
+                </button>
               </div>
             </div>
 
+            {proformasOpen && <SupplierProformas catalog={inventoryCatalog} onAdd={addSupplierOffer} />}
             {importedCount > 0 && <p role="status">Líneas agregadas: {importedCount}.</p>}
             {pasteOpen && (
               <section id="quote-product-import" aria-label="Pegar productos" style={{ ...card(), marginBottom: 12 }}>
