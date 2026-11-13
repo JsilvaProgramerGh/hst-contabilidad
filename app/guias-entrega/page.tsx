@@ -133,7 +133,7 @@ export default function DeliveryGuidesPage() {
     const next = store((current) => {
       const sequence = guide.id ? current.sequence : current.sequence + 1;
       const saved = {
-        ...guide, items: populatedItems(guide.items), id: guide.id || crypto.randomUUID(),
+        ...guide, id: guide.id || crypto.randomUUID(),
         number: guide.number || `GE-${String(sequence).padStart(6, "0")}`,
       };
       return { ...current, sequence, guides: [saved, ...current.guides.filter((row) => row.id !== saved.id)] };
@@ -354,6 +354,7 @@ export default function DeliveryGuidesPage() {
           {guide.signature && <div><button type="button" className={button} onClick={() => patch({ signature: "" })}>Borrar firma</button></div>}
         </div>
       </section>
+      <p className="text-sm text-slate-300">Puedes guardar o descargar la guía con espacios en blanco para llenarlos a mano.</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={primary} disabled={!ready || working || signatureDraft} onClick={saveGuide}>Guardar guía</button>
         <button type="button" className={button} disabled={working || signatureDraft} onClick={download}>Descargar PDF</button>

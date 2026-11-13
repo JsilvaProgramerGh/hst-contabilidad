@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { populatedItems, type Guide } from "../delivery-guide";
+import { emptyItem, type Guide } from "../delivery-guide";
 
 const navy = "#152235";
 const gray = "#465a6e";
@@ -51,11 +51,11 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
       y += 4.5;
     }
   }
-  const dateTime = (date: string, time: string) => {
+  const formatDate = (date: string) => {
     const formatted = date ? new Date(`${date}T00:00:00Z`).toLocaleDateString("es-EC", {
       day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
     }) : "";
-    return [formatted, time].filter(Boolean).join(" · ");
+    return formatted;
   };
   function fieldRows(title: string, rows: [string, string][][], shaded = true) {
     ensure((title ? 8 : 0) + 10);
@@ -71,11 +71,12 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
       const columnWidth = width / row.length;
       style();
       const columns = row.map(([label, value]) => ({
-        label,
-        lines: doc.splitTextToSize(value || "________________", columnWidth - 10) as string[],
+        label, value: value.trim(),
+        lines: doc.splitTextToSize(value.trim(), columnWidth - 10) as string[],
       }));
-      const count = Math.max(...columns.map(({ lines }) => lines.length));
-      ensure(9);
+      const count = Math.max(1, ...columns.map(({ lines }) => lines.length));
+      const valueHeight = columns.some(({ value }) => !value) ? 6.2 : 4.4;
+      ensure(4.5 + valueHeight);
       if (shaded) {
         doc.setFillColor(pale);
         doc.rect(margin, y, width, 4.5, "F");
@@ -83,13 +84,17 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
       columns.forEach(({ label }, index) => draw(label, margin + index * columnWidth + (shaded ? 5 : 0), y + 3, 8, true, gray));
       y += 4.5;
       for (let line = 0; line < count; line++) {
-        ensure(4.4);
+        ensure(valueHeight);
         if (shaded) {
           doc.setFillColor(pale);
-          doc.rect(margin, y, width, 4.4, "F");
+          doc.rect(margin, y, width, valueHeight, "F");
         }
-        columns.forEach(({ lines }, index) => draw(lines[line] ?? "", margin + index * columnWidth + (shaded ? 5 : 0), y + 3.1));
-        y += 4.4;
+        columns.forEach(({ lines, value }, index) => {
+          const x = margin + index * columnWidth + (shaded ? 5 : 0);
+          if (!value && line === 0) doc.setDrawColor(gray).setLineWidth(.15).line(x, y + 5, x + columnWidth - 10, y + 5);
+          else draw(lines[line] ?? "", x, y + 3.1);
+        });
+        y += valueHeight;
       }
     }
     y += 4;
@@ -111,17 +116,19 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
   fieldRows("Despacho y transporte", [
     [["Remitente", guide.sender.name], ["Conductor / transportista", guide.vehicle.driver]],
     [["Punto de partida", guide.sender.origin], ["Identificación del conductor", guide.vehicle.driverId]],
-    [["Fecha y hora de salida", dateTime(guide.dispatchDate, guide.dispatchTime)],
-      ["Tipo de vehículo y placa", [guide.vehicle.vehicleType, guide.vehicle.color, guide.vehicle.plate].filter(Boolean).join(" · ")]],
+    [["Fecha de salida", formatDate(guide.dispatchDate)], ["Hora de salida", guide.dispatchTime]],
+    [["Tipo y color del vehículo", [guide.vehicle.vehicleType, guide.vehicle.color].filter(Boolean).join(" · ")], ["Placa", guide.vehicle.plate]],
   ]);
   fieldRows("Destino y entrega", [
     [["Empresa destinataria", guide.destination.company], ["RUC del destinatario", guide.destination.ruc]],
-    [["Dirección de entrega", guide.destination.address], ["Fecha y hora prevista", dateTime(guide.deliveryDate, guide.deliveryTime)]],
-    ...(guide.destination.receiver ? [[["Recepción prevista", guide.destination.receiver]] as [string, string][]] : []),
+    [["Dirección de entrega", guide.destination.address], ["Recepción prevista", guide.destination.receiver]],
+    [["Fecha prevista de entrega", formatDate(guide.deliveryDate)], ["Hora prevista de entrega", guide.deliveryTime]],
   ]);
   fieldRows("", [[["Factura de referencia", guide.invoice], ["Orden de compra", guide.order], ["Bultos", guide.packages]]], false);
 
-  ensure(23);
+  const items = guide.items.some((item) => Object.values(item).some((value) => value.trim()))
+    ? guide.items : Array.from({ length: Math.max(3, guide.items.length) }, () => emptyItem);
+  ensure(27);
   draw("Mercadería entregada", margin, y + 4, 12, true);
   autoTable(doc, {
     startY: y + 8,
@@ -130,7 +137,13 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
     },
     margin: { left: margin, right: margin, top: 17, bottom: 27 },
     head: [["Código", "Producto y descripción", "Cantidad", "Presentación"]],
-    body: populatedItems(guide.items).map((item) => [item.code, [item.product, item.details].filter(Boolean).join("\n"), item.quantity, item.presentation]),
+    body: items.map((item) => [item.code, [item.product, item.details].filter(Boolean).join("\n"), item.quantity, item.presentation]),
+    didParseCell: ({ section, cell }) => {
+      if (section === "body" && !cell.text.join("").trim()) {
+        cell.styles.minCellHeight = 9;
+        cell.styles.lineWidth = .15;
+      }
+    },
     theme: "striped",
     rowPageBreak: "avoid",
     showHead: "everyPage",
@@ -144,7 +157,8 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
 
   ensure(48);
   fieldRows("Constancia de recepción", [
-    [["Recibido por", guide.receivedBy], ["Fecha y hora real de recepción", dateTime(guide.receivedDate, guide.receivedTime)]],
+    [["Recibido por", guide.receivedBy]],
+    [["Fecha real de recepción", formatDate(guide.receivedDate)], ["Hora real de recepción", guide.receivedTime]],
   ], false);
   ensure(24);
   doc.setDrawColor(border).roundedRect(margin, y, width, 21, 2, 2);

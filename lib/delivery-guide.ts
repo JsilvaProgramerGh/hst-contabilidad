@@ -53,20 +53,24 @@ export function populatedItems(items: GuideItem[]) {
 }
 
 export function validateGuide(guide: Guide) {
-  if (!guide.sender.name.trim() || !guide.sender.origin.trim() || !guide.destination.company.trim() ||
-      !guide.destination.address.trim() || !guide.invoice.trim()) return "Completa el remitente, origen, destino, dirección y factura.";
-  if (!guide.dispatchDate || !guide.dispatchTime || !guide.deliveryDate || !guide.deliveryTime) return "Completa las fechas y horas de salida y entrega.";
-  if (`${guide.dispatchDate}T${guide.dispatchTime}` > `${guide.deliveryDate}T${guide.deliveryTime}`) {
-    return "La entrega prevista debe ser posterior a la salida.";
+  const dates = [guide.dispatchDate, guide.deliveryDate, guide.receivedDate];
+  const times = [guide.dispatchTime, guide.deliveryTime, guide.receivedTime];
+  for (const date of dates.filter(Boolean)) {
+    const parsed = new Date(`${date}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.valueOf()) ||
+        parsed.toISOString().slice(0, 10) !== date) return "Revisa las fechas ingresadas.";
   }
-  if (Boolean(guide.receivedDate) !== Boolean(guide.receivedTime)) return "Completa la fecha y la hora real de recepción.";
-  if (guide.receivedDate && `${guide.receivedDate}T${guide.receivedTime}` < `${guide.dispatchDate}T${guide.dispatchTime}`) {
-    return "La recepción no puede ser anterior a la salida.";
-  }
-  const items = populatedItems(guide.items);
-  if (!items.length || items.some((item) => !item.product.trim() || !/^\d+(?:[.,]\d+)?$/.test(item.quantity.trim()) ||
-    !Number.isFinite(Number(item.quantity.replace(",", "."))) || Number(item.quantity.replace(",", ".")) <= 0)) {
-    return "Agrega productos con nombre y cantidad mayor que cero.";
-  }
+  if (times.some((time) => time && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))) return "Revisa las horas ingresadas.";
+
+  const beforeDispatch = (date: string, time: string) => Boolean(date && guide.dispatchDate &&
+    (date < guide.dispatchDate || (date === guide.dispatchDate && time && guide.dispatchTime && time < guide.dispatchTime)));
+  if (beforeDispatch(guide.deliveryDate, guide.deliveryTime)) return "La entrega prevista no puede ser anterior a la salida.";
+  if (beforeDispatch(guide.receivedDate, guide.receivedTime)) return "La recepción no puede ser anterior a la salida.";
+
+  if (guide.items.some(({ quantity }) => {
+    const value = quantity.trim();
+    const numeric = Number(value.replace(",", "."));
+    return value && (!/^\d+(?:[.,]\d+)?$/.test(value) || !Number.isFinite(numeric) || numeric <= 0);
+  })) return "Las cantidades ingresadas deben ser números mayores que cero.";
   return "";
 }
