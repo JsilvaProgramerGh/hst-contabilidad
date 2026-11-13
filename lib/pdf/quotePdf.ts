@@ -38,6 +38,8 @@ const left = 16;
 const right = 194;
 const width = right - left;
 const top = 16;
+const logoWidth = 36;
+const logoHeight = 32;
 const bottom = 273;
 const lineHeight = 4.2;
 const padding = 2.2;
@@ -142,9 +144,9 @@ export function generateQuotePDF(data: QuotePdfData) {
   write("Cotización", right, top + 6, { size: 25, bold: true }, "right");
   if (!wideNumber) write(numberLabel, right, top + 14, { size: 10, bold: true, color: teal }, "right");
 
-  const companyX = left + (logo ? 22 : 0);
+  const companyX = left + (logo ? logoWidth + 5 : 0);
   const companyWidth = 126 - companyX;
-  if (logo) drawImage(doc, logo, left, top, 17, 17);
+  if (logo) drawImage(doc, logo, left, top, logoWidth, logoHeight);
   if (company?.name) {
     const nameLines = wrap(company.name, companyWidth, { size: 15, serif: true });
     for (const line of nameLines) {
@@ -164,7 +166,7 @@ export function generateQuotePDF(data: QuotePdfData) {
     write(label, companyX, y + 3.1, { size: 8, bold: true, color: gray });
     paragraph(wrap(clean, companyWidth - 21, { size: 8 }), companyX + 21);
   }
-  y = Math.max(y, top + 18) + 4;
+  y = Math.max(y, top + (logo ? logoHeight + 1 : 18)) + 4;
   ensureSpace(16);
   rule(y);
   write("Fecha de emisión", left, y + 7, { size: 8, bold: true, color: gray });

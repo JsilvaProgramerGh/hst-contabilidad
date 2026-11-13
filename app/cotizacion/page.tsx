@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { generateQuotePDF } from "@/lib/pdf/quotePdf";
-import { loadQuoteImage } from "@/lib/pdf/quote-images";
+import { loadQuoteImage, loadQuoteLogo } from "@/lib/pdf/quote-images";
 import type { QuoteLineDetails } from "@/lib/quote-line";
 import { parseProductImport, PRODUCT_IMPORT_HEADERS, type ProductImport } from "@/lib/quote-product-import";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -762,7 +762,7 @@ export default function CotizacionPRO() {
       return load;
     });
     const [logo, linePhotos] = await Promise.all([
-      loadQuoteImage(companyProfile.logo_url),
+      loadQuoteLogo(companyProfile.logo_url),
       Promise.all(photos),
     ]);
     return generateQuotePDF({
