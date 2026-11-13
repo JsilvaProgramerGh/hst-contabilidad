@@ -18,7 +18,7 @@ export type ProductImport = {
   errors: string[];
 };
 
-function readCells(line: string): string[] | null {
+export function readCells(line: string): string[] | null {
   const cell = /(?:"((?:[^"]|"")*)"|([^"\t][^\t]*|))(\t|$)/gy;
   const values: string[] = [];
   while (true) {
@@ -29,7 +29,7 @@ function readCells(line: string): string[] | null {
   }
 }
 
-function normalizeNumber(value: string): string | null {
+export function normalizeNumber(value: string): string | null {
   let normalized: string;
   if (/^\d{1,3}(?:,\d{3})+\.\d+$/.test(value)) {
     normalized = value.replaceAll(",", "");
