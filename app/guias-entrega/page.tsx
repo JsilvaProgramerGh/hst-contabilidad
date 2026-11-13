@@ -46,6 +46,9 @@ export default function DeliveryGuidesPage() {
   const [paste, setPaste] = useState("");
   const [preview, setPreview] = useState<ReturnType<typeof parseGuideItems> | null>(null);
   const [working, setWorking] = useState(false);
+  const [logoLoading, setLogoLoading] = useState(false);
+  const [logoError, setLogoError] = useState("");
+  const logoRequest = useRef(0);
   const dirty = useRef(false);
   const signing = useRef(false);
   const [signatureDraft, setSignatureDraft] = useState(false);
@@ -99,7 +102,45 @@ export default function DeliveryGuidesPage() {
     }
   }
 
+  function cancelLogoRead() {
+    logoRequest.current++;
+    setLogoLoading(false);
+    setLogoError("");
+  }
+
+  function updateLogo(logo: string) {
+    cancelLogoRead();
+    dirty.current = true;
+    setGuide((current) => ({ ...current, sender: { ...current.sender, logo } }));
+  }
+
+  async function readLogo(file: File) {
+    cancelLogoRead();
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp", "image/x-ms-bmp"].includes(file.type) ||
+        !file.size || file.size > 10 * 1024 * 1024) {
+      setLogoError("Elige una imagen PNG, JPG, WebP, GIF o BMP de hasta 10 MB.");
+      return;
+    }
+    const request = logoRequest.current;
+    dirty.current = true;
+    setLogoLoading(true);
+    const source = URL.createObjectURL(file);
+    try {
+      const logo = await loadQuoteImage(source, 384);
+      if (request !== logoRequest.current) return;
+      if (!logo) {
+        setLogoError("No se pudo leer la imagen.");
+        return;
+      }
+      setGuide((current) => ({ ...current, sender: { ...current.sender, logo } }));
+    } finally {
+      URL.revokeObjectURL(source);
+      if (request === logoRequest.current) setLogoLoading(false);
+    }
+  }
+
   function selectSender(value: string) {
+    cancelLogoRead();
     if (value === "add") {
       patch({ brand: `custom-${crypto.randomUUID()}`, sender: { ...emptySender } });
       return;
@@ -147,6 +188,7 @@ export default function DeliveryGuidesPage() {
 
   function open(next: Guide) {
     if (dirty.current && !window.confirm("¿Descartar los cambios sin guardar?")) return;
+    cancelLogoRead();
     setGuide(next);
     dirty.current = Boolean(next.id);
     setSignatureDraft(false);
@@ -233,8 +275,28 @@ export default function DeliveryGuidesPage() {
             </select>
           </label>
           {([["name", "Remitente"], ["ruc", "RUC del remitente"], ["email", "Correo del remitente"],
-            ["origin", "Punto de partida"], ["logo", "URL del logo"]] as const).map(([key, label]) =>
+            ["origin", "Punto de partida"]] as const).map(([key, label]) =>
             <Input key={key} label={label} value={guide.sender[key]} onChange={(value) => patch({ sender: { ...guide.sender, [key]: value } })} />)}
+          <div className="grid gap-2 sm:col-span-2 sm:grid-cols-2">
+            <Input label="URL del logo" value={guide.sender.logo.startsWith("data:image/") ? "" : guide.sender.logo} onChange={updateLogo} />
+            <label className="grid gap-1 text-sm">Subir logo desde este equipo
+              <input className={field} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.bmp"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) void readLogo(file);
+                }} />
+            </label>
+            {logoLoading && <p role="status">Preparando imagen…</p>}
+            {logoError && <p role="alert" className="text-sm text-red-300">{logoError}</p>}
+            {guide.sender.logo && (
+              <div className="flex items-center gap-3 sm:col-span-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img key={guide.sender.logo} src={guide.sender.logo} crossOrigin="anonymous" alt="Vista previa del logo" className="h-16 w-28 rounded bg-white object-contain" />
+                <button type="button" className={button} onClick={() => updateLogo("")}>Quitar logo</button>
+              </div>
+            )}
+          </div>
           <Input label="Fecha de salida" type="date" value={guide.dispatchDate} onChange={(dispatchDate) => patch({ dispatchDate })} />
           <Input label="Hora de salida" type="time" value={guide.dispatchTime} onChange={(dispatchTime) => patch({ dispatchTime })} />
           <Input label="Placa" list="guide-plates" value={guide.vehicle.plate} onChange={(plate) => {
@@ -247,7 +309,7 @@ export default function DeliveryGuidesPage() {
             <Input key={key} label={label} value={guide.vehicle[key]} onChange={(value) => patch({ vehicle: { ...guide.vehicle, [key]: value } })} />)}
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className={button} disabled={!ready || !guide.sender.name.trim()} onClick={saveSenderProfile}>
+          <button type="button" className={button} disabled={!ready || logoLoading || !guide.sender.name.trim()} onClick={saveSenderProfile}>
             Guardar perfil del remitente
           </button>
           <button type="button" className={button} onClick={() => patch({
@@ -356,8 +418,8 @@ export default function DeliveryGuidesPage() {
       </section>
       <p className="text-sm text-slate-300">Puedes guardar o descargar la guía con espacios en blanco para llenarlos a mano.</p>
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={primary} disabled={!ready || working || signatureDraft} onClick={saveGuide}>Guardar guía</button>
-        <button type="button" className={button} disabled={working || signatureDraft} onClick={download}>Descargar PDF</button>
+        <button type="button" className={primary} disabled={!ready || working || signatureDraft || logoLoading} onClick={saveGuide}>Guardar guía</button>
+        <button type="button" className={button} disabled={working || signatureDraft || logoLoading} onClick={download}>Descargar PDF</button>
       </div>
       {message && <p role="status">{message}</p>}
       {error && <p role="alert" className="text-red-300">{error}</p>}
