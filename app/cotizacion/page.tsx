@@ -7,6 +7,7 @@ import { generateQuotePDF } from "@/lib/pdf/quotePdf";
 import { loadQuoteImage, loadQuoteLogo } from "@/lib/pdf/quote-images";
 import type { QuoteLineDetails } from "@/lib/quote-line";
 import { parseProductImport, PRODUCT_IMPORT_HEADERS, type ProductImport } from "@/lib/quote-product-import";
+import { findSavedCustomerName, getRucCandidate } from "@/lib/ruc-lookup";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
   DEFAULT_QUOTE_COMPANY_PROFILE,
@@ -35,6 +36,12 @@ type Customer = {
   phone: string | null;
   address: string | null;
 };
+type RucLookup =
+  | { status: "invalid" }
+  | { status: "loading" | "absent" | "ambiguous" | "error"; ruc: string }
+  | { status: "found"; ruc: string; name: string; matchedDocument: string };
+
+const SRI_RUC_URL = "https://srienlinea.sri.gob.ec/facturacion-internet/consultas/publico/ruc-datos1.jspa";
 type InventoryEntry = {
   variant_id: string;
   product_id: string;
@@ -231,6 +238,9 @@ export default function CotizacionPRO() {
   const [customerSyncStatus, setCustomerSyncStatus] = useState("");
   const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [customerTableReady, setCustomerTableReady] = useState(true);
+  const [rucLookup, setRucLookup] = useState<RucLookup | null>(null);
+  const rucRequest = useRef<AbortController | null>(null);
+  const customerAutoFillRevision = useRef(0);
 
   const [ivaRate, setIvaRate] = useState(IVA_DEFAULT);
   const [discount, setDiscount] = useState("");
@@ -270,6 +280,46 @@ export default function CotizacionPRO() {
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const signatureDrawingRef = useRef(false);
   const signaturePointRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => () => rucRequest.current?.abort(), []);
+
+  function clearRucLookup() {
+    rucRequest.current?.abort();
+    rucRequest.current = null;
+    setRucLookup(null);
+  }
+
+  async function consultRuc() {
+    clearRucLookup();
+    const document = clientId.trim();
+    const ruc = getRucCandidate(document);
+    if (!ruc) {
+      setRucLookup({ status: "invalid" });
+      return;
+    }
+
+    const documents = document === ruc ? [ruc] : [document, ruc];
+    customerAutoFillRevision.current += 1;
+    const request = new AbortController();
+    rucRequest.current = request;
+    setRucLookup({ status: "loading", ruc });
+
+    try {
+      const { data, error } = await supabaseBrowser()
+        .from("customers")
+        .select("document_number,legal_name,display_name")
+        .in("document_number", documents)
+        .abortSignal(AbortSignal.any([request.signal, AbortSignal.timeout(8000)]));
+
+      if (error) throw error;
+      if (request.signal.aborted) return;
+      setRucLookup({ ...findSavedCustomerName(data ?? [], documents), ruc });
+    } catch {
+      if (!request.signal.aborted) setRucLookup({ status: "error", ruc });
+    } finally {
+      if (rucRequest.current === request) rucRequest.current = null;
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -336,6 +386,7 @@ export default function CotizacionPRO() {
     const value = clientId.trim();
 
     if (!value || value.length < 6 || !customerTableReady) return;
+    const autoFillRevision = customerAutoFillRevision.current;
 
     const timer = setTimeout(async () => {
       const { data, error } = await sb
@@ -345,7 +396,7 @@ export default function CotizacionPRO() {
         .limit(1)
         .maybeSingle();
 
-      if (!active || error || !data) return;
+      if (!active || error || !data || autoFillRevision !== customerAutoFillRevision.current) return;
       const customer = data as Customer;
       if (selectedCustomer?.id === customer.id) return;
 
@@ -1440,12 +1491,14 @@ export default function CotizacionPRO() {
   };
 
   const openQuote = async (id: string) => {
+    clearRucLookup();
     const res = await fetch(`/api/quotes/${id}`);
     const json = await res.json();
     if (!res.ok) return alert(json.error || "Error cargando");
 
     const q = json.data.quote;
     const its = json.data.items as any[];
+    clearRucLookup();
 
     setPasteOpen(false);
     setImportedCount(0);
@@ -1945,6 +1998,7 @@ export default function CotizacionPRO() {
                     <button
                       type="button"
                       onClick={() => {
+                        clearRucLookup();
                         setSelectedCustomer(null);
                         setCustomerQuery("");
                         setCustomerResults([]);
@@ -1961,7 +2015,8 @@ export default function CotizacionPRO() {
                       <button
                         key={customer.id}
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          clearRucLookup();
                           fillCustomer(customer, {
                             setClientName,
                             setClientId,
@@ -1971,8 +2026,8 @@ export default function CotizacionPRO() {
                             setCustomerQuery,
                             setCustomerResults,
                             setSelectedCustomer,
-                          })
-                        }
+                          });
+                        }}
                         style={{
                           width: "100%",
                           textAlign: "left",
@@ -2011,12 +2066,43 @@ export default function CotizacionPRO() {
                     style={input()}
                     value={clientId}
                     onChange={(e) => {
+                      clearRucLookup();
                       setClientId(e.target.value);
                       if (selectedCustomer && e.target.value.trim() !== (selectedCustomer.document_number || "")) {
                         setSelectedCustomer(null);
                       }
                     }}
                   />
+                  <div style={{ marginTop: 8 }}>
+                    <button type="button" style={btn()} onClick={consultRuc} disabled={rucLookup?.status === "loading"}>
+                      Consultar cédula o RUC
+                    </button>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>Busca en los clientes guardados de HST.</div>
+                    <div role="status" style={{ fontSize: 13, marginTop: 4 }}>
+                      {rucLookup?.status === "invalid" && "Escribe una cédula de 10 dígitos o un RUC de 13 dígitos."}
+                      {rucLookup?.status === "loading" && "Buscando en clientes guardados…"}
+                      {rucLookup?.status === "absent" && "No hay coincidencias con nombre en los clientes guardados. Puedes ingresar el nombre manualmente o consultar el RUC en el SRI."}
+                      {rucLookup?.status === "ambiguous" && "Hay varios clientes guardados con el mismo documento. Verifica el nombre antes de ingresarlo."}
+                      {rucLookup?.status === "error" && "No se pudo consultar la base de clientes. Puedes reintentar o consultar el SRI."}
+                      {rucLookup?.status === "found" && <><strong>{rucLookup.name}</strong>{` · Guardado en HST por ${rucLookup.matchedDocument.length === 10 ? "cédula" : "RUC"}`}</>}
+                    </div>
+                    {rucLookup?.status === "found" && (
+                      <button type="button" style={btn()} onClick={() => {
+                        customerAutoFillRevision.current += 1;
+                        setClientName(rucLookup.name);
+                        clearRucLookup();
+                      }}>
+                        Usar nombre
+                      </button>
+                    )}
+                    {rucLookup && "ruc" in rucLookup && (
+                      <div style={{ fontSize: 13, marginTop: 6 }}>
+                        RUC para ingresar en el SRI: <strong>{rucLookup.ruc}</strong>{" · "}
+                        <a href={SRI_RUC_URL} target="_blank" rel="noopener noreferrer">Abrir consulta oficial del SRI</a>
+                        <div>Después de consultar, copia la razón social al campo Nombre.</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <label style={label()}>Teléfono</label>
