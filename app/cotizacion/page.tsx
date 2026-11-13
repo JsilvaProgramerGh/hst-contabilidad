@@ -1781,6 +1781,7 @@ export default function CotizacionPRO() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }} className="mobile-quotes-hero">
         <div>
           <h1 style={{ fontSize: 38, margin: 0, color: "#f8fafc" }}>Cotizaciones</h1>
+          <a href="/guias-entrega" style={{ color: "#93c5fd", fontSize: 13, textDecoration: "none", fontWeight: 700 }}>Guías de entrega</a>
           <a href="/empresa-cotizaciones" style={{ color: "#93c5fd", fontSize: 13, textDecoration: "none", fontWeight: 700 }}>
             Editar logo y datos de la empresa
           </a>

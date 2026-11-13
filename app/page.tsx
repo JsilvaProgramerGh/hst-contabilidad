@@ -65,6 +65,7 @@ function InventoryDrawer() {
           <Link style={drawerItem} href="/cotizacion" onClick={() => setOpen(false)}>
             Cotizaciones
           </Link>
+          <Link style={drawerItem} href="/guias-entrega" onClick={() => setOpen(false)}>Guías de entrega</Link>
           <Link style={drawerItem} href="/agenda-pedidos" onClick={() => setOpen(false)}>
             Agenda de pedidos
           </Link>
