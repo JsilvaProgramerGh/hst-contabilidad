@@ -9,8 +9,9 @@ export type GuideItem = { code: string; product: string; details: string; quanti
 export type Sender = { name: string; ruc: string; email: string; origin: string; logo: string };
 export type Vehicle = { plate: string; vehicleType: string; color: string; driver: string; driverId: string };
 export type Destination = { company: string; ruc: string; address: string; receiver: string };
+export type SenderProfileId = "hst" | "agrosilva" | `custom-${string}`;
 export type Guide = {
-  id: string; number: string; brand: "hst" | "agrosilva"; sender: Sender; vehicle: Vehicle; destination: Destination;
+  id: string; number: string; brand: SenderProfileId; sender: Sender; vehicle: Vehicle; destination: Destination;
   dispatchDate: string; dispatchTime: string; deliveryDate: string; deliveryTime: string;
   invoice: string; order: string; packages: string; receivedBy: string; receivedDate: string;
   receivedTime: string; condition: "" | "conforme" | "observaciones"; observations: string; signature: string;

@@ -11,7 +11,12 @@ import { loadQuoteImage } from "@/lib/pdf/quote-images";
 import { generateDeliveryGuide } from "@/lib/pdf/deliveryGuidePdf";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
-type Library = { guides: Guide[]; vehicles: Vehicle[]; destinations: Destination[]; agro: Sender; sequence: number };
+type CustomSender = { id: `custom-${string}`; sender: Sender };
+type Library = {
+  guides: Guide[]; vehicles: Vehicle[]; destinations: Destination[]; agro: Sender; sequence: number;
+  hst?: Sender;
+  customSenders?: CustomSender[];
+};
 const storageKey = "hst.delivery-guides.v1";
 const emptyLibrary: Library = { guides: [], vehicles: [], destinations: [], agro: agroSender, sequence: 0 };
 const field = "w-full rounded-lg border border-slate-600 bg-slate-950 p-2 text-slate-100";
@@ -51,7 +56,11 @@ export default function DeliveryGuidesPage() {
     async function initialize() {
       try {
         const raw = localStorage.getItem(storageKey);
-        if (raw) setLibrary(JSON.parse(raw));
+        if (raw) {
+          const saved: Library = JSON.parse(raw);
+          setLibrary(saved);
+          if (saved.hst && !dirty.current) setGuide(newGuide(saved.hst));
+        }
       } catch { setError("No se pudo abrir el historial de este navegador."); }
       setReady(true);
       try {
@@ -64,7 +73,7 @@ export default function DeliveryGuidesPage() {
           origin: [data.address, data.city].filter(Boolean).join(", "), logo: data.logo_url ?? "",
         };
         setHst(profile);
-        if (!dirty.current) setGuide((current) => current.brand === "hst" ? { ...current, sender: profile } : current);
+        if (!dirty.current) setGuide((current) => current.brand === "hst" && !current.sender.name ? { ...current, sender: profile } : current);
       } catch { /* Manual entry remains available. */ }
     }
     void initialize();
@@ -88,6 +97,34 @@ export default function DeliveryGuidesPage() {
       setError("No se pudo guardar en este navegador. Descarga el PDF antes de cerrar.");
       return null;
     }
+  }
+
+  function selectSender(value: string) {
+    if (value === "add") {
+      patch({ brand: `custom-${crypto.randomUUID()}`, sender: { ...emptySender } });
+      return;
+    }
+    const custom = library.customSenders?.find(({ id }) => id === value);
+    if (custom) patch({ brand: custom.id, sender: { ...custom.sender } });
+    else if (value === "hst") patch({ brand: "hst", sender: { ...(library.hst ?? hst) } });
+    else if (value === "agrosilva") patch({ brand: "agrosilva", sender: { ...library.agro } });
+  }
+
+  function saveSenderProfile() {
+    const { brand, sender } = guide;
+    if (!sender.name.trim()) return;
+    const profile = { ...sender, name: sender.name.trim() };
+    if (store((current) => {
+      if (brand === "hst") return { ...current, hst: profile };
+      if (brand === "agrosilva") return { ...current, agro: profile };
+      const customSenders = current.customSenders ?? [];
+      const existing = customSenders.some(({ id }) => id === brand);
+      return {
+        ...current, customSenders: existing
+          ? customSenders.map((entry) => entry.id === brand ? { id: brand, sender: profile } : entry)
+          : [...customSenders, { id: brand, sender: profile }],
+      };
+    })) setMessage("Perfil del remitente guardado.");
   }
 
   function saveGuide() {
@@ -173,7 +210,7 @@ export default function DeliveryGuidesPage() {
           <h1 className="text-3xl font-bold">Guías de entrega</h1>
           <p className="text-sm text-slate-300">Constancia de entrega de mercadería. Sin autorización fiscal del SRI.</p>
         </div>
-        <button type="button" className={button} onClick={() => open(newGuide(hst))}>Nueva guía</button>
+        <button type="button" className={button} onClick={() => open(newGuide(library.hst ?? hst))}>Nueva guía</button>
       </header>
       <details className={card}>
         <summary className="cursor-pointer font-semibold">Historial de este navegador ({library.guides.length})</summary>
@@ -186,10 +223,14 @@ export default function DeliveryGuidesPage() {
         <h2 className="text-lg font-semibold">Despacho y transporte {guide.number && `· ${guide.number}`}</h2>
         <div className={grid}>
           <label className="grid gap-1 text-sm">Perfil del remitente
-            <select className={field} value={guide.brand} onChange={(event) => {
-              const brand = event.target.value === "agrosilva" ? "agrosilva" : "hst";
-              patch({ brand, sender: { ...(brand === "agrosilva" ? library.agro : hst) } });
-            }}><option value="hst">HST</option><option value="agrosilva">Agrosilva</option></select>
+            <select className={field} value={guide.brand} onChange={(event) => selectSender(event.target.value)}>
+              <option value="hst">HST Global Store</option>
+              <option value="agrosilva">Agrosilva</option>
+              {library.customSenders?.map(({ id, sender }) => <option key={id} value={id}>{sender.name}</option>)}
+              {guide.brand.startsWith("custom-") && !library.customSenders?.some(({ id }) => id === guide.brand) &&
+                <option value={guide.brand}>{guide.sender.name || "Nuevo remitente"}</option>}
+              <option value="add">Agregar otro remitente</option>
+            </select>
           </label>
           {([["name", "Remitente"], ["ruc", "RUC del remitente"], ["email", "Correo del remitente"],
             ["origin", "Punto de partida"], ["logo", "URL del logo"]] as const).map(([key, label]) =>
@@ -206,9 +247,9 @@ export default function DeliveryGuidesPage() {
             <Input key={key} label={label} value={guide.vehicle[key]} onChange={(value) => patch({ vehicle: { ...guide.vehicle, [key]: value } })} />)}
         </div>
         <div className="flex flex-wrap gap-2">
-          {guide.brand === "agrosilva" && <button type="button" className={button} disabled={!ready || !guide.sender.name.trim()} onClick={() => {
-            if (store((current) => ({ ...current, agro: guide.sender }))) setMessage("Perfil Agrosilva guardado.");
-          }}>Guardar perfil Agrosilva</button>}
+          <button type="button" className={button} disabled={!ready || !guide.sender.name.trim()} onClick={saveSenderProfile}>
+            Guardar perfil del remitente
+          </button>
           <button type="button" className={button} onClick={() => patch({
             vehicle: { ...emptyVehicle, plate: guide.vehicle.plate, vehicleType: "Sedán", color: "Azul" },
           })}>Usar sedán azul</button>

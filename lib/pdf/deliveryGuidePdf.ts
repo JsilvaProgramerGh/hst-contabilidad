@@ -103,7 +103,7 @@ export function generateDeliveryGuide(guide: Guide, logo?: string | null) {
   const brandX = margin + (logo ? 31 : 0);
   paragraph(guide.sender.name, brandX, 111 - brandX, 14, false, navy, "times");
   if (guide.sender.ruc) paragraph(`RUC ${guide.sender.ruc}`, brandX, 111 - brandX, 8, false, gray);
-  if (guide.sender.email) paragraph(guide.sender.email, brandX, 111 - brandX, 8, false, gray);
+  if (guide.brand !== "agrosilva" && guide.sender.email) paragraph(guide.sender.email, brandX, 111 - brandX, 8, false, gray);
   y = Math.max(y + 4, 33);
   doc.setDrawColor(border).line(margin, y, right, y);
   y += 5.5;
