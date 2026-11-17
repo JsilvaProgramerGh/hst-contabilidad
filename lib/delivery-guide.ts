@@ -1,9 +1,9 @@
-import { parseProductImport, PRODUCT_IMPORT_HEADERS } from "./quote-product-import";
+import { parseProductImport, PRODUCT_IMPORT_HEADERS, readCells } from "./quote-product-import";
 
 export const guideHeaders = PRODUCT_IMPORT_HEADERS.slice(0, 5);
-export const extractionPrompt = `Extrae de la factura adjunta solo los productos, sin precios ni datos personales. Devuelve únicamente TSV (tabulaciones reales), una fila por producto y este encabezado exacto:
+export const extractionPrompt = `Extrae de la factura adjunta solo los productos, sin precios ni datos personales. Devuelve un único bloque de código marcado como tsv, con tabulaciones reales, una fila por producto y este encabezado exacto:
 ${guideHeaders.join("\t")}
-Conserva ceros iniciales. Producto y cantidad son obligatorios. Si no puedes leerlos, indícalo antes de generar el TSV. Deja vacías las otras celdas si faltan, conservando sus tabulaciones. Usa descripciones de una sola línea y cantidades sin separador de miles.`;
+Conserva ceros iniciales. Producto y cantidad son obligatorios. Si no puedes leerlos, indícalo antes de generar el TSV. Deja vacías las otras celdas si faltan, conservando sus tabulaciones. Usa descripciones de una sola línea y cantidades sin separador de miles. No agregues barras invertidas al final de las filas. Para pegarlo en HST, usa «Copiar código» en el bloque.`;
 
 export type GuideItem = { code: string; product: string; details: string; quantity: string; presentation: string };
 export type Sender = { name: string; ruc: string; email: string; origin: string; logo: string };
@@ -34,10 +34,33 @@ export function newGuide(sender: Sender): Guide {
 }
 
 export function parseGuideItems(text: string) {
-  const lines = text.split(/\r\n|\n|\r/);
-  const header = lines.findIndex((line) => line.replace(/^\uFEFF/, "").trim());
+  const lines = text.replace(/^\uFEFF/, "").split(/\r\n|\n|\r/);
+  let header = lines.findIndex((line) => line.trim());
+  const fence = lines[header]?.trim().match(/^(`{3,}|~{3,})(?:[ \t]*tsv)?$/i)?.[1];
+  if (fence) {
+    const end = lines.findLastIndex((line) => line.trim());
+    if (end <= header || lines[end].trim() !== fence) {
+      return { items: [], errors: ["Pega un solo bloque TSV completo o usa «Copiar código»."] };
+    }
+    lines[header] = lines[end] = "";
+    header = lines.findIndex((line) => line.trim());
+  }
+
+  // A slash after the exact header identifies a paste with Markdown hard breaks.
+  const hardBreak = /(?<!\\)\\ *$/;
+  const headerWithoutBreak = lines[header]?.replace(hardBreak, "");
+  const headings = headerWithoutBreak ? readCells(headerWithoutBreak) : null;
+  const actualHeaders = new Set(headings?.map((cell) => cell.normalize("NFC").toLowerCase()));
+  const markdownBreaks = lines[header] !== headerWithoutBreak && headings?.length === guideHeaders.length &&
+    guideHeaders.every((name) => actualHeaders.has(name.toLowerCase()));
+
   for (let index = header; index >= 0 && index < lines.length; index++) {
-    if (lines[index].trim()) lines[index] += index === header ? `\t${PRODUCT_IMPORT_HEADERS[5]}` : "\t";
+    const line = lines[index];
+    if (!line.trim()) continue;
+    const cleaned = line.replace(hardBreak, "");
+    if (cleaned !== line && (markdownBreaks || /[ "]\\ *$/.test(line)) &&
+        readCells(cleaned)?.length === guideHeaders.length) lines[index] = cleaned;
+    lines[index] += index === header ? `\t${PRODUCT_IMPORT_HEADERS[5]}` : "\t";
   }
   const parsed = parseProductImport(lines.join("\n"));
   return {
