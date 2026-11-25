@@ -1,7 +1,7 @@
 "use client";
 
 import { supabaseBrowser } from "@/lib/supabase-browser";
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ecuadorDate, money, paymentsFor, pendingInvoices, periods, rangeFor, saleBalance, saleProfit, startDate,
   summarize, type Ledger, type Period, type Range, type Sale } from "@/lib/accounting";
 
@@ -43,8 +43,6 @@ function Lines({ lines, onChange }: { lines: { product: string; qty: string }[];
 
 export default function AccountingDashboard() {
   const [today] = useState(ecuadorDate);
-  const [key, setKey] = useState("");
-  const [access, setAccess] = useState("");
   const [ledger, setLedger] = useState<Ledger | null>(null);
   const [period, setPeriod] = useState<Period>("month");
   const [custom, setCustom] = useState<Range>({ from: today, to: today });
@@ -70,9 +68,9 @@ export default function AccountingDashboard() {
     ["IVA de compra pagado (prorrata de caja)", money(summary.paidVAT)], ["Crédito IVA elegible registrado", money(summary.input)], ["IVA estimado · saldo (+) o crédito (−)", money(summary.vatEstimate)],
   ] : [];
 
-  async function call<T>(action: string, values: object = {}, id?: string, token = access): Promise<T> {
+  async function call<T>(action: string, values: object = {}, id?: string): Promise<T> {
     const response = await fetch("/api/contabilidad", { method: "POST", cache: "no-store",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ action, values, id }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "No se pudo completar la operación.");
@@ -90,19 +88,19 @@ export default function AccountingDashboard() {
     finally { running.current = false; setBusy(false); }
   }
 
-  async function refresh(token = access) {
-    setLedger((await call<{ ledger: Ledger }>("load", {}, undefined, token)).ledger);
+  async function refresh() {
+    setLedger((await call<{ ledger: Ledger }>("load")).ledger);
   }
 
-  function unlock(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void run(async () => {
-      const token = key.trim();
-      await refresh(token);
-      setAccess(token);
-      setKey("");
+  useEffect(() => {
+    let active = true;
+    void call<{ ledger: Ledger }>("load").then((data) => {
+      if (active) setLedger(data.ledger);
+    }).catch(() => {
+      if (active) setError("No se pudo cargar la contabilidad. Vuelve a intentar.");
     });
-  }
+    return () => { active = false; };
+  }, []);
 
   function submit(event: FormEvent<HTMLFormElement>, action: string, additional: object = {}, onSaved?: () => void) {
     event.preventDefault();
@@ -145,13 +143,11 @@ export default function AccountingDashboard() {
   return <main className="mx-auto grid max-w-7xl gap-5 px-4 pb-16 pt-20 text-slate-100 sm:px-8">
     <header className="flex flex-wrap items-end justify-between gap-3">
       <div><p className="font-semibold text-teal-300">HST Global Store</p><h1 className="text-3xl font-bold">Contabilidad</h1></div>
-      {access && <button className={subtle} disabled={busy} onClick={() => { setAccess(""); setLedger(null); setShared(""); setEdit(null); }}>Cerrar panel</button>}
     </header>
-    {!ledger ? <form onSubmit={unlock} className={`${panel} max-w-lg`}>
-      <label className="grid gap-2">Clave del panel contable<input type="password" className={field} value={key}
-        required autoComplete="off" onChange={(event) => setKey(event.target.value)} /></label>
-      <button className={`${button} w-fit`} disabled={busy}>Abrir contabilidad</button>
-    </form> : <>
+    {!ledger ? <section className={panel}>
+      <p role="status">{error ? "La contabilidad no está disponible." : "Cargando contabilidad…"}</p>
+      {error && <button className={`${button} w-fit`} disabled={busy} onClick={() => void run(() => refresh())}>Reintentar</button>}
+    </section> : <>
       <section className={panel}>
         <div className="flex flex-wrap items-end gap-3">
           <label className="grid gap-1 text-sm">Período<select className={field} value={period} onChange={(event) => setPeriod(event.target.value as Period)}>

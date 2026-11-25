@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { accountingLedger, tokenDigest } from "@/lib/accounting-server";
@@ -12,8 +12,6 @@ const date = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2
 export async function POST(request: Request) {
   const key = process.env.HST_ACCOUNTING_ACCESS_KEY;
   if (!key || key.length < 32) return reply({ error: "Configura la clave del panel contable." }, 503);
-  if (!timingSafeEqual(Buffer.from(tokenDigest(request.headers.get("authorization") ?? ""), "hex"),
-    Buffer.from(tokenDigest(`Bearer ${key}`), "hex"))) return reply({ error: "Clave incorrecta." }, 401);
   try {
     const raw = await request.text();
     if (raw.length > 300_000) return reply({ error: "Solicitud demasiado larga." }, 413);
