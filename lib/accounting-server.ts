@@ -92,3 +92,12 @@ export async function sharedPending(token: string, db?: Client, today = ecuadorD
   const range = { from: data.from_date ?? "", to: data.to_date ?? "" };
   return { range, pending: pendingInvoices(await invoiceLedger(client), range, today, true) };
 }
+
+export async function treasuryLedger(db: Client) {
+  const [settings, entries] = await Promise.all([
+    db.from("account_treasury_settings").select("*").maybeSingle(),
+    rows<import("./treasury").TreasuryEntry>(db,"account_treasury_entries","*","date","id"),
+  ]);
+  if (settings.error) throw settings.error;
+  return { settings: settings.data, entries };
+}
