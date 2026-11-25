@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
-import { accountingLedger, tokenDigest } from "@/lib/accounting-server";
+import { accountingLedger, treasuryLedger, tokenDigest } from "@/lib/accounting-server";
 import { ecuadorDate } from "@/lib/accounting";
 
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -17,7 +17,10 @@ export async function POST(request: Request) {
     if (raw.length > 300_000) return reply({ error: "Solicitud demasiado larga." }, 413);
     const { action, id, values = {} } = JSON.parse(raw) ?? {};
     const db = supabaseServer();
-    if (action === "load") return reply({ ledger: await accountingLedger(db) });
+    if (action === "load") {
+      const [ledger, treasury] = await Promise.all([accountingLedger(db),treasuryLedger(db)]);
+      return reply({ ledger, treasury });
+    }
     if (action === "attachment") {
       let path: string | undefined;
       if (/^\d+$/.test(String(values.legacy_id))) {
@@ -46,7 +49,7 @@ export async function POST(request: Request) {
       if (signed.error) throw signed.error;
       return reply({ path, token: signed.data.token });
     }
-    if (!uuid.test(String(id)) || !["sale", "legacy_details", "purchase", "purchase_vat", "sale_vat", "payment", "allocate", "cash", "share", "revoke"].includes(action)) {
+    if (!uuid.test(String(id)) || !["sale", "legacy_details", "purchase", "purchase_vat", "sale_vat", "payment", "allocate", "cash", "share", "revoke", "treasury_settings", "treasury_entry"].includes(action)) {
       return reply({ error: "Operación inválida." }, 400);
     }
     let payload = { ...values, action };
@@ -67,7 +70,7 @@ export async function POST(request: Request) {
       token = createHmac("sha256", key).update(`accounting-share:${id}`).digest("hex");
       payload = { action, digest: tokenDigest(token), from: values.from, to: values.to, expires: values.expires };
     }
-    const { error } = await db.rpc("hst_account_write", { p_id: id, p_data: payload });
+    const { error } = await db.rpc(action.startsWith("treasury_") ? "hst_treasury_write" : "hst_account_write", { p_id: id, p_data: payload });
     if (error) {
       if (error.code === "P0001") return reply({ error: error.message }, 409);
       if (error.code === "23505") return reply({ error: "Ya existe ese número o referencia de documento." }, 409);

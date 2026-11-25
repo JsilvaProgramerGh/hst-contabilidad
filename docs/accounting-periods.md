@@ -20,3 +20,16 @@ El corte de reportes no requiere borrar registros. Verifica las dependencias rea
 Exporta filas completas de facturas candidatas y sus pagos, junto con todos los metadatos de almacenamiento correspondientes. Descarga los PDFs del bucket invoices por su ruta exacta usando la API de Storage. Guarda un manifiesto con ID, total, pagos, ruta, bytes y SHA-256. Verifica conteos, importes y hashes. Conserva el respaldo privado y prueba la restauración antes de cualquier decisión de borrado. Para recuperar espacio, confirma además que ninguna otra factura ni módulo referencia cada blob y utiliza Storage API para retirarlo. La eliminación de una fila de facturas no elimina el archivo.
 
 El coordinador confirmó 12 facturas, 10 cobros históricos y 32 movimientos. Usa accounting-cleanup-audit.sql para exportar el manifiesto exacto con acceso de solo lectura. El runtime de este checkout rechazó la consulta SQL de producción por falta de un flujo de aprobación.
+
+
+## Caja, capital y reservas
+
+Aplica `accounting-treasury.sql` antes del despliegue que lee estas tablas. No crea saldos ni movimientos de cliente. El operador configura caja/bancos, caja chica y capital propio al inicio del 24/11/2026, antes de los cobros/pagos de ese día. Los saldos actuales son acumulados y no cambian al elegir otro período. Los saldos iniciales se corrigen sustituyéndolos; para aportes posteriores se usa el historial.
+
+Capital aportado actual = aporte inicial + aportes posteriores − devoluciones de capital. No es patrimonio contable completo, valor de inventario ni ganancia. La contribución de ventas del período descuenta costos y gastos asignados; no representa utilidad neta después de todos los gastos indirectos e impuestos.
+
+El excedente de caja suma la cuenta principal y caja chica, y resta las compras registradas pendientes, la reserva de capital de trabajo, otras reservas y la reserva tributaria. Es disponibilidad estimada con datos registrados, no utilidad distribuible garantizada. Un saldo negativo de cuenta o IVA desconocido sin reserva manual impide calcular el excedente. Las cuentas por cobrar no se consideran dinero gastable. El IVA reservado se acumula desde el inicio; una reserva manual sustituye ese cálculo para permitir obligaciones anteriores, impuestos ya pagados y otros tributos. No se inventa un capital inicial.
+
+Los traspasos mueven dinero entre cuentas sin crear ingresos/gastos. Aportes, retiros personales y devoluciones de capital no cambian la contribución de ventas. El gasto de caja chica reduce saldo y aparece en el flujo del período. Los cobros/pagos existentes se imputan a cuenta principal; no se deben repetir como gasto de caja chica. Actualmente los pagos de comprobantes salen de la principal: transferir primero el efectivo si corresponde. El sistema registra saldos negativos para facilitar conciliación y los muestra en rojo; no ejecuta transferencias bancarias.
+
+La interfaz separa Resumen, Ventas y cobros, Compras y pagos, Caja y capital e Impuestos. Los gráficos utilizan datos reales registrados y respetan reducción de movimiento. Verde indica excedente, rojo faltante y neutro configuración o información pendiente.

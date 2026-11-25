@@ -5,10 +5,13 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { ecuadorDate, money, paymentsFor, pendingInvoices, periods, rangeFor, saleBalance, saleProfit, startDate,
   summarize, type Ledger, type Period, type Range, type Sale } from "@/lib/accounting";
 
-const panel = "grid gap-3 rounded-xl border border-slate-700 bg-slate-900 p-4";
-const field = "min-w-0 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2";
-const button = "rounded-lg bg-teal-700 px-4 py-2 font-semibold text-white disabled:opacity-50";
-const subtle = "rounded-lg border border-slate-600 px-3 py-2 text-sm disabled:opacity-50";
+import styles from './accounting.module.css';
+import { Overview, TreasuryPanel } from './accounting-insights';
+import { treasurySummary, type Treasury } from '@/lib/treasury';
+const panel = styles.panel;
+const field = styles.field;
+const button = styles.button;
+const subtle = styles.subtle;
 const grid = "grid gap-3 sm:grid-cols-2 lg:grid-cols-3";
 
 function Input({ label, name, type = "text", required, defaultValue, max }: {
@@ -43,6 +46,8 @@ function Lines({ lines, onChange }: { lines: { product: string; qty: string }[];
 
 export default function AccountingDashboard() {
   const [today] = useState(ecuadorDate);
+  const [tab,setTab] = useState("overview");
+  const [treasury,setTreasury] = useState<Treasury>({settings:null,entries:[]});
   const [ledger, setLedger] = useState<Ledger | null>(null);
   const [period, setPeriod] = useState<Period>("month");
   const [custom, setCustom] = useState<Range>({ from: today, to: today });
@@ -59,13 +64,17 @@ export default function AccountingDashboard() {
   const range = rangeFor(period, today, custom);
   const historical = historic || period === "all";
   const validRange = !range.from || !range.to || range.from <= range.to;
-  const summary = ledger && validRange ? summarize(ledger, range, historical, today) : null;
+  const summary = ledger && validRange ? summarize({ ...ledger, movements: [...ledger.movements, ...treasury.entries.filter(e=>e.kind==="petty_expense").map(e=>({ id:e.id,type:"GASTO",amount:e.amount,date:e.date,description:e.description }))] }, range, historical, today) : null;
   const pending = ledger && validRange ? pendingInvoices(ledger, range, today, historical) : [];
+  const current = ledger ? treasurySummary(ledger,treasury,today) : null;
   const metrics: [string, string][] = summary ? [
     ["Ventas facturadas", money(summary.gross)], ["Cobros y entradas de caja", money(summary.cashIn)], ["Pagos y salidas de caja", money(summary.cashOut)],
     ["Saldo actual por cobrar", money(summary.outstanding)], ["Saldo actual por pagar", money(summary.payable)],
     ["IVA facturado", money(summary.output)], ["IVA de compras registrado", money(summary.purchaseVAT)],
     ["IVA de compra pagado (prorrata de caja)", money(summary.paidVAT)], ["Crédito IVA elegible registrado", money(summary.input)], ["IVA estimado · saldo (+) o crédito (−)", money(summary.vatEstimate)],
+    ["Saldo actual: cuenta principal",money(current?.main??null)],["Saldo actual: caja chica",money(current?.petty??null)],
+    ["Capital aportado actual",money(current?.capital??null)],["Reserva actual: capital de trabajo",money(treasury.settings?.working_reserve??null)],
+    ["Excedente de caja actual estimado",money(current?.withdrawable??null)],
   ] : [];
 
   async function call<T>(action: string, values: object = {}, id?: string): Promise<T> {
@@ -89,13 +98,14 @@ export default function AccountingDashboard() {
   }
 
   async function refresh() {
-    setLedger((await call<{ ledger: Ledger }>("load")).ledger);
+    const data = await call<{ledger: Ledger;treasury:Treasury}>("load");
+    setLedger(data.ledger);setTreasury(data.treasury);
   }
 
   useEffect(() => {
     let active = true;
-    void call<{ ledger: Ledger }>("load").then((data) => {
-      if (active) setLedger(data.ledger);
+    void call<{ ledger: Ledger; treasury:Treasury }>("load").then((data) => {
+      if (active) { setLedger(data.ledger);setTreasury(data.treasury); }
     }).catch(() => {
       if (active) setError("No se pudo cargar la contabilidad. Vuelve a intentar.");
     });
@@ -140,16 +150,19 @@ export default function AccountingDashboard() {
     });
   }
 
-  return <main className="mx-auto grid max-w-7xl gap-5 px-4 pb-16 pt-20 text-slate-100 sm:px-8">
-    <header className="flex flex-wrap items-end justify-between gap-3">
-      <div><p className="font-semibold text-teal-300">HST Global Store</p><h1 className="text-3xl font-bold">Contabilidad</h1></div>
+  return <main className={styles.root}>
+    <header className={styles.header}>
+      <div><p className={styles.eyebrow}>HST GLOBAL STORE / FINANZAS</p><h1>Tu negocio, de un vistazo.</h1><p className={styles.caption}>Controla lo que entra, protege tu capital y decide con claridad.</p></div><span className={styles.caption}>USD · Ecuador<br/>{today.split("-").reverse().join("/")}</span>
     </header>
+    <nav className={styles.tabs} aria-label="Secciones de contabilidad">
+      {[["overview","Resumen"],["sales","Ventas y cobros"],["purchases","Compras y pagos"],["cash","Caja y capital"],["tax","Impuestos"]].map(([id,label])=><button key={id} type="button" className={styles.tab} aria-current={tab===id?"page":undefined} onClick={()=>setTab(id)}>{label}</button>)}
+    </nav>
     {!ledger ? <section className={panel}>
       <p role="status">{error ? "La contabilidad no está disponible." : "Cargando contabilidad…"}</p>
       {error && <button className={`${button} w-fit`} disabled={busy} onClick={() => void run(() => refresh())}>Reintentar</button>}
     </section> : <>
       <section className={panel}>
-        <div className="flex flex-wrap items-end gap-3">
+        <div className={styles.toolbar}>
           <label className="grid gap-1 text-sm">Período<select className={field} value={period} onChange={(event) => setPeriod(event.target.value as Period)}>
             {Object.entries(periods).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select></label>
@@ -165,15 +178,23 @@ export default function AccountingDashboard() {
         </div>
         {period !== "all" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={historic}
           onChange={(event) => setHistoric(event.target.checked)} /> Incluir operaciones anteriores al {startDate}</label>}
-        {!historical && <p className="text-sm text-slate-300">Inicio operativo {startDate}. Las cuentas por cobrar incluyen facturas importadas pendientes de noviembre de 2026 dentro del período seleccionado.</p>}
+        {!historical && <p className="text-sm text-slate-300">Los informes usan el período seleccionado. Los saldos de caja y las reservas muestran el acumulado actual desde el 24/11/2026.</p>}
         {!validRange && <p role="alert" className="text-rose-300">La fecha inicial es posterior a la final.</p>}
       </section>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {metrics.map(([label, value]) => <div key={label} className={panel}><span className="text-sm text-slate-300">{label}</span><strong className="text-xl">{value}</strong></div>)}
+      <div hidden={tab!=="overview"} className={styles.content}>
+        <Overview ledger={ledger} treasury={treasury} today={today} sales={summary?.invoiced??[]} go={setTab}/>
+        <div className={styles.cards}>{metrics.slice(0,4).map(([label,value],i)=><article className={styles.metric} key={label}><span>{label}</span><strong className={i===1?styles.good:i===2?styles.warning:""}>{value}</strong><small>Período seleccionado</small></article>)}</div>
       </div>
-      <p className="text-sm text-slate-300">El IVA se estima con los datos registrados. Los saldos a favor previos y las retenciones quedan fuera del cálculo. Consulta los comprobantes para la declaración del SRI.</p>
+      <div hidden={tab!=="cash"} className={styles.content}><TreasuryPanel treasury={treasury} ledger={ledger} today={today} submit={submit} busy={busy}/></div>
+      <section hidden={tab!=="tax"} className={panel}>
+        <div><span className={styles.eyebrow}>DESGLOSE DEL PERÍODO</span><h2>Impuestos e IVA</h2></div>
+        <div className={styles.cards}>{metrics.slice(5,10).map(([label,value])=><article className={styles.metric} key={label}><span>{label}</span><strong>{value}</strong></article>)}</div>
+        <p className={styles.caption}>El IVA se estima con los datos registrados. Los saldos a favor previos y las retenciones quedan fuera del cálculo. La reserva manual de Caja y capital permite apartar el total que aún debas pagar.</p>
+        <a className={styles.subtle} href="https://www.sri.gob.ec/impuesto-al-valor-agregado-iva" target="_blank" rel="noreferrer">Consultar información del SRI ↗</a>
+      </section>
 
+      <div hidden={tab!=="sales"} className={styles.content}>
       <details className={panel}><summary className="cursor-pointer font-semibold">Registrar factura de venta</summary>
         <form className="grid gap-3" onSubmit={(event) => submit(event, "sale", { lines }, () => setLines([{ product: "", qty: "1" }]))}>
           <div className={grid}>
@@ -188,6 +209,8 @@ export default function AccountingDashboard() {
           <button className={`${button} w-fit`} disabled={busy}>Guardar factura</button>
         </form>
       </details>
+      </div>
+      <div hidden={tab!=="purchases"} className={styles.content}>
       <details className={panel}><summary className="cursor-pointer font-semibold">Registrar compra o gasto con comprobante</summary>
         <form className="grid gap-3" onSubmit={(event) => submit(event, "purchase")}>
           <div className={grid}>
@@ -204,6 +227,8 @@ export default function AccountingDashboard() {
           <button className={`${button} w-fit`} disabled={busy}>Guardar comprobante</button>
         </form>
       </details>
+      </div>
+      <div hidden={tab!=="cash"} className={styles.content}>
       <details className={panel}><summary className="cursor-pointer font-semibold">Registrar otro movimiento de caja</summary>
         <form className="grid gap-3" onSubmit={(event) => submit(event, "cash")}>
           <div className={grid}>
@@ -215,9 +240,10 @@ export default function AccountingDashboard() {
           <button className={`${button} w-fit`} disabled={busy}>Guardar movimiento</button>
         </form>
       </details>
+      </div>
 
       {summary && <>
-        <section className={panel}>
+        <section hidden={tab!=="sales"} className={panel}>
           <h2 className="text-xl font-semibold">Facturas del período</h2>
           {!summary.invoiced.length && <p>No hay ventas facturadas en este período.</p>}
           {summary.invoiced.concat(summary.receivableSales.filter((sale) => !summary.invoiced.includes(sale))).map((sale) => {
@@ -277,7 +303,7 @@ export default function AccountingDashboard() {
             </details>;
           })}
         </section>
-        <section className={panel}>
+        <section hidden={tab!=="purchases"} className={panel}>
           <h2 className="text-xl font-semibold">Compras y cuentas por pagar</h2>
           {!summary.purchases.length && <p>No hay compras registradas en este período.</p>}
           {summary.purchases.map((purchase) => {
@@ -306,14 +332,14 @@ export default function AccountingDashboard() {
             </details>;
           })}
         </section>
-        <details className={panel}><summary className="cursor-pointer font-semibold">Movimientos de caja del período</summary>
+        <details hidden={tab!=="cash"} className={panel}><summary className="cursor-pointer font-semibold">Movimientos de caja del período</summary>
           {[...summary.movements.map((row) => ({ id: row.id, date: row.date, amount: row.amount, label: row.description, outgoing: row.type === "GASTO" })),
             ...summary.payments.map((row) => ({ id: row.id, date: row.paid_on, amount: row.amount, label: row.purchase_id ? "Pago de compra" : "Cobro de factura", outgoing: Boolean(row.purchase_id) }))]
             .sort((a, b) => b.date.localeCompare(a.date)).map((row) => <p key={row.id}>{row.date} · {row.label} · {row.outgoing ? "−" : "+"}{money(row.amount)}</p>)}
         </details>
       </>}
 
-      <details className={panel}><summary className="cursor-pointer font-semibold">Compartir facturas pendientes</summary>
+      <details hidden={tab!=="sales"} className={panel}><summary className="cursor-pointer font-semibold">Compartir facturas pendientes</summary>
         <form className="grid gap-3" onSubmit={(event) => submit(event, "share", {}, undefined)}>
           <p className="text-sm text-slate-300">Comparte en privado. Quien tenga el enlace podrá leer las facturas pendientes del alcance seleccionado hasta el vencimiento o la revocación.</p>
           <div className={grid} key={`${range.from}:${range.to}`}>
@@ -331,7 +357,7 @@ export default function AccountingDashboard() {
         </form>)}
       </details>
     </>}
-    {(busy || notice || error) && <div className="sticky bottom-3 rounded-lg border border-slate-600 bg-slate-950 p-3">
+    {(busy || notice || error) && <div className={styles.status}>
       {busy && <p role="status">Procesando…</p>}
       {notice && <p role="status">{notice}</p>}
       {error && <p role="alert" className="text-rose-300">{error}</p>}
