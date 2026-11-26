@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { ecuadorDate, money, paymentsFor, pendingInvoices, periods, rangeFor, saleBalance, saleProfit, startDate,
   summarize, type Ledger, type Period, type Range, type Sale } from "@/lib/accounting";
 
+import { normalizeAccountingValues } from "@/lib/decimal-input";
 import styles from './accounting.module.css';
 import { Overview, TreasuryPanel } from './accounting-insights';
 import { treasurySummary, type Treasury } from '@/lib/treasury';
@@ -18,7 +19,7 @@ function Input({ label, name, type = "text", required, defaultValue, max }: {
   label: string; name: string; type?: string; required?: boolean; defaultValue?: string; max?: string;
 }) {
   return <label className="grid gap-1 text-sm">{label}
-    <input className={field} name={name} type={type} required={required} defaultValue={defaultValue} max={max}
+    <input className={field} name={name} type={type === "number" ? "text" : type} required={required} defaultValue={defaultValue} max={max}
       inputMode={type === "number" ? "decimal" : undefined} step={type === "number" ? "any" : undefined} />
   </label>;
 }
@@ -36,7 +37,7 @@ function Lines({ lines, onChange }: { lines: { product: string; qty: string }[];
     {lines.map((line, index) => <div key={index} className="flex flex-wrap gap-2">
       <input aria-label={`Producto ${index + 1}`} placeholder="Producto o servicio" required maxLength={400} className={`${field} grow`}
         value={line.product} onChange={(event) => onChange(lines.map((item, i) => i === index ? { ...item, product: event.target.value } : item))} />
-      <input aria-label={`Cantidad ${index + 1}`} className={`${field} w-28`} type="number" required min="0.0001" step="0.0001"
+      <input aria-label={`Cantidad ${index + 1}`} className={`${field} w-28`} type="text" inputMode="decimal" required
         value={line.qty} onChange={(event) => onChange(lines.map((item, i) => i === index ? { ...item, qty: event.target.value } : item))} />
       {lines.length > 1 && <button type="button" className={subtle} onClick={() => onChange(lines.filter((_, i) => i !== index))}>Quitar</button>}
     </div>)}
@@ -119,7 +120,7 @@ export default function AccountingDashboard() {
       const fields = new FormData(form);
       const attachment = fields.get("attachment");
       fields.delete("attachment");
-      const values: Record<string, unknown> = { ...Object.fromEntries(fields), ...additional };
+      const values: Record<string, unknown> = normalizeAccountingValues({ ...Object.fromEntries(fields), ...additional });
       const pdf = attachment instanceof File && attachment.size ? attachment : null;
       if (pdf) {
         if (pdf.size > 20 * 1024 * 1024 || await pdf.slice(0, 5).text() !== "%PDF-") {
@@ -161,7 +162,7 @@ export default function AccountingDashboard() {
       <p role="status">{error ? "La contabilidad no está disponible." : "Cargando contabilidad…"}</p>
       {error && <button className={`${button} w-fit`} disabled={busy} onClick={() => void run(() => refresh())}>Reintentar</button>}
     </section> : <>
-      <section className={panel}>
+      <section hidden={tab==="cash"} className={panel}>
         <div className={styles.toolbar}>
           <label className="grid gap-1 text-sm">Período<select className={field} value={period} onChange={(event) => setPeriod(event.target.value as Period)}>
             {Object.entries(periods).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -228,7 +229,7 @@ export default function AccountingDashboard() {
         </form>
       </details>
       </div>
-      <div hidden={tab!=="cash"} className={styles.content}>
+      <div hidden={tab!=="cash"||!treasury.settings} className={styles.content}>
       <details className={panel}><summary className="cursor-pointer font-semibold">Registrar otro movimiento de caja</summary>
         <form className="grid gap-3" onSubmit={(event) => submit(event, "cash")}>
           <div className={grid}>
@@ -332,7 +333,7 @@ export default function AccountingDashboard() {
             </details>;
           })}
         </section>
-        <details hidden={tab!=="cash"} className={panel}><summary className="cursor-pointer font-semibold">Movimientos de caja del período</summary>
+        <details hidden={tab!=="cash"||!treasury.settings} className={panel}><summary className="cursor-pointer font-semibold">Movimientos de caja del período</summary>
           {[...summary.movements.map((row) => ({ id: row.id, date: row.date, amount: row.amount, label: row.description, outgoing: row.type === "GASTO" })),
             ...summary.payments.map((row) => ({ id: row.id, date: row.paid_on, amount: row.amount, label: row.purchase_id ? "Pago de compra" : "Cobro de factura", outgoing: Boolean(row.purchase_id) }))]
             .sort((a, b) => b.date.localeCompare(a.date)).map((row) => <p key={row.id}>{row.date} · {row.label} · {row.outgoing ? "−" : "+"}{money(row.amount)}</p>)}

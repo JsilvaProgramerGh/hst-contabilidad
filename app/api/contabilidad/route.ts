@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { accountingLedger, treasuryLedger, tokenDigest } from "@/lib/accounting-server";
+import { normalizeAccountingValues } from "@/lib/decimal-input";
 import { ecuadorDate } from "@/lib/accounting";
 
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -15,7 +16,10 @@ export async function POST(request: Request) {
   try {
     const raw = await request.text();
     if (raw.length > 300_000) return reply({ error: "Solicitud demasiado larga." }, 413);
-    const { action, id, values = {} } = JSON.parse(raw) ?? {};
+    const { action, id, values: rawValues = {} } = JSON.parse(raw) ?? {};
+    let values: typeof rawValues;
+    try { values = normalizeAccountingValues(rawValues); }
+    catch (cause) { return reply({ error: cause instanceof Error ? cause.message : "Revisa los importes." },400); }
     const db = supabaseServer();
     if (action === "load") {
       const [ledger, treasury] = await Promise.all([accountingLedger(db),treasuryLedger(db)]);
