@@ -1,5 +1,7 @@
 "use client";
 import { useState, type FormEvent } from 'react';
+import TreasurySetup from './treasury-setup';
+import DecimalField from './decimal-field';
 import { money, startDate, summarize, type Ledger } from '@/lib/accounting';
 import { treasurySummary, periodContribution, type Treasury } from '@/lib/treasury';
 import s from './accounting.module.css';
@@ -64,29 +66,22 @@ export function Overview({ ledger, treasury, today, sales, go }: {
 }
 
 type Submit = (event: FormEvent<HTMLFormElement>,action:string,additional?:object,onSaved?:()=>void)=>void;
-function Amount({label,name,value,required=true}: {label:string;name:string;value?:number|null;required?:boolean}) {
-  return <label className={s.label}>{label}<input className={s.field} name={name} type="number" min="0" step="0.01" required={required} defaultValue={value??''}/></label>;
-}
 export function TreasuryPanel({treasury,ledger,today,submit,busy}: {treasury:Treasury;ledger:Ledger;today:string;submit:Submit;busy:boolean}) {
   const [configure,setConfigure]=useState(!treasury.settings);
   const t=treasurySummary(ledger,treasury,today);const config=treasury.settings;
   return <>
     <section className={s.panel}><div className={s.sectionHeading}><div><span className={s.eyebrow}>CONTROL DE FONDOS</span><h2>Caja, capital y reservas</h2></div><button className={s.subtle} onClick={()=>setConfigure(!configure)}>{configure?'Ocultar configuración':'Editar saldos y reservas'}</button></div>
-      <p className={s.caption}>El capital es tu inversión; la contribución proviene de las ventas. El dinero en caja cambia al cobrar y pagar. Las reservas apartan dinero sin generar un gasto.</p>
-      <div className={s.cards}><article className={s.metric}><span>Cuenta principal</span><strong className={t.main!==null&&t.main<0?s.bad:''}>{money(t.main)}</strong></article><article className={s.metric}><span>Caja chica</span><strong className={t.petty!==null&&t.petty<0?s.bad:''}>{money(t.petty)}</strong></article><article className={s.metric}><span>Capital aportado actual</span><strong>{money(t.capital)}</strong></article><article className={s.metric}><span>Retiros personales registrados</span><strong>{money(t.draws)}</strong></article></div>
-      {configure&&<form key={JSON.stringify(config)} className={s.form} onSubmit={e=>submit(e,'treasury_settings',{},()=>setConfigure(false))}>
-        <h3>Saldos al inicio del 24/11/2026</h3><p className={s.caption}>Escribe lo que realmente tenías antes de los movimientos de ese día. No pongas el saldo de hoy: se sumaría dos veces. Estos saldos sustituyen la configuración previa.</p>
-        <div className={s.formGrid}><Amount label="Caja y bancos iniciales" name="opening_main" value={config?.opening_main}/><Amount label="Caja chica inicial" name="opening_petty" value={config?.opening_petty}/><Amount label="Capital propio aportado inicialmente" name="opening_capital" value={config?.opening_capital}/></div>
-        <h3>Dinero que quieres proteger</h3><div className={s.formGrid}><Amount label="Reserva para compras y capital de trabajo" name="working_reserve" value={config?.working_reserve}/><Amount label="Otras reservas (sin repetir deudas ni IVA)" name="other_reserve" value={config?.other_reserve}/><Amount label="Reserva total de impuestos (vacío: estimar IVA)" name="tax_reserve" value={config?.tax_reserve} required={false}/></div>
-        <p className={s.caption}>Las deudas de compras pendientes se apartan automáticamente. La reserva manual de impuestos sustituye la estimación: incluye en ella obligaciones o períodos anteriores que aún debas pagar.</p>
-        <button className={s.button} disabled={busy}>Guardar saldos y reservas</button>
-      </form>}
+      <p className={s.caption}>Aquí separas el dinero que tienes, lo que has invertido y lo que quieres guardar para seguir trabajando.</p>
+      {config&&!configure&&<div className={s.cards}><article className={s.metric}><span>Cuenta principal</span><strong className={t.main!==null&&t.main<0?s.bad:''}>{config?money(t.main):"Aún sin configurar"}</strong></article><article className={s.metric}><span>Caja chica</span><strong className={t.petty!==null&&t.petty<0?s.bad:''}>{config?money(t.petty):"Aún sin configurar"}</strong></article><article className={s.metric}><span>Capital aportado actual</span><strong>{config?money(t.capital):"Aún sin configurar"}</strong></article><article className={s.metric}><span>Retiros personales registrados</span><strong>{money(t.draws)}</strong></article></div>}
+
+      {configure&&<TreasurySetup key={JSON.stringify(config)} config={config} busy={busy} onSave={e=>submit(e,'treasury_settings',{},()=>setConfigure(false))}/>}
+
     </section>
     {config&&<section className={s.panel}><h2>Registrar movimiento de fondos</h2><form className={s.form} onSubmit={e=>submit(e,'treasury_entry')}><div className={s.formGrid}>
       <label className={s.label}>Tipo de movimiento<select className={s.field} name="kind"><option value="to_petty">Traspaso: principal → caja chica</option><option value="to_main">Traspaso: caja chica → principal</option><option value="petty_expense">Gasto pagado desde caja chica</option><option value="contribution">Aporte de capital a cuenta principal</option><option value="owner_draw">Retiro personal desde cuenta principal</option><option value="capital_return">Devolución de capital desde cuenta principal</option></select></label>
-      <Amount label="Monto" name="amount"/><label className={s.label}>Fecha<input className={s.field} type="date" name="date" min={startDate} max={today} defaultValue={today} required/></label>
+      <DecimalField label="Monto" name="amount"/><label className={s.label}>Fecha<input className={s.field} type="date" name="date" min={startDate} max={today} defaultValue={today} required/></label>
       <label className={s.label}>Concepto<input className={s.field} name="description" maxLength={500} required/></label></div>
       <p className={s.caption}>Los traspasos no cambian el dinero total. Un aporte no es ingreso por ventas y un retiro personal no es gasto del negocio. Para pagar una compra ya registrada, utiliza su botón de pago; no la registres otra vez aquí.</p><button className={s.button} disabled={busy}>Guardar movimiento</button></form></section>}
-    <section className={s.panel}><h2>Historial de capital y caja chica</h2>{!treasury.entries.length?<p className={s.caption}>Aún no hay movimientos. Los saldos iniciales se configuran arriba.</p>:<div className={s.tableScroll}><table><thead><tr><th>Fecha</th><th>Movimiento</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>{[...treasury.entries].reverse().map(e=><tr key={e.id}><td>{e.date}</td><td>{{contribution:'Aporte de capital',capital_return:'Devolución de capital',owner_draw:'Retiro personal',to_petty:'Principal → caja chica',to_main:'Caja chica → principal',petty_expense:'Gasto de caja chica'}[e.kind]}</td><td>{e.description}</td><td>{money(e.amount)}</td></tr>)}</tbody></table></div>}</section>
+    <section hidden={!config} className={s.panel}><h2>Historial de capital y caja chica</h2>{!treasury.entries.length?<p className={s.caption}>Aún no hay movimientos. Los saldos iniciales se configuran arriba.</p>:<div className={s.tableScroll}><table><thead><tr><th>Fecha</th><th>Movimiento</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>{[...treasury.entries].reverse().map(e=><tr key={e.id}><td>{e.date}</td><td>{{contribution:'Aporte de capital',capital_return:'Devolución de capital',owner_draw:'Retiro personal',to_petty:'Principal → caja chica',to_main:'Caja chica → principal',petty_expense:'Gasto de caja chica'}[e.kind]}</td><td>{e.description}</td><td>{money(e.amount)}</td></tr>)}</tbody></table></div>}</section>
   </>;
 }
