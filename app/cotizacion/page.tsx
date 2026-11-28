@@ -9,6 +9,7 @@ import type { QuoteLineDetails } from "@/lib/quote-line";
 import SupplierProformas from "./supplier-proformas";
 import { quoteLineFromOffer, type SupplierOffer } from "@/lib/supplier-proformas";
 import { parseProductImport, PRODUCT_IMPORT_HEADERS, type ProductImport } from "@/lib/quote-product-import";
+import type { SriCustomer } from "@/lib/sri-ruc";
 import { findSavedCustomerName, getRucCandidate } from "@/lib/ruc-lookup";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
@@ -41,7 +42,7 @@ type Customer = {
 type RucLookup =
   | { status: "invalid" }
   | { status: "loading" | "absent" | "ambiguous" | "error"; ruc: string }
-  | { status: "found"; ruc: string; name: string; matchedDocument: string };
+  | { status: "found"; ruc: string; name: string; matchedDocument: string; source: "SRI" | "HST"; customer?: SriCustomer };
 
 const SRI_RUC_URL = "https://srienlinea.sri.gob.ec/facturacion-internet/consultas/publico/ruc-datos1.jspa";
 type InventoryEntry = {
@@ -308,17 +309,38 @@ export default function CotizacionPRO() {
     setRucLookup({ status: "loading", ruc });
 
     try {
-      const { data, error } = await supabaseBrowser()
-        .from("customers")
-        .select("document_number,legal_name,display_name")
-        .in("document_number", documents)
-        .abortSignal(AbortSignal.any([request.signal, AbortSignal.timeout(8000)]));
-
-      if (error) throw error;
+      let remoteUnavailable = false;
+      try {
+        const response = await fetch("/api/clientes/consultar", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document }), signal: request.signal,
+        });
+        const result = await response.json();
+        if (request.signal.aborted) return;
+        if (response.ok && result.status === "found" && result.customer?.ruc === ruc) {
+          const customer: SriCustomer = result.customer;
+          setClientName(customer.name);
+          setRucLookup({status:"found",ruc,name:customer.name,matchedDocument:ruc,source:"SRI",customer});
+          return;
+        }
+        remoteUnavailable = !response.ok;
+      } catch {
+        if (request.signal.aborted) return;
+        remoteUnavailable = true;
+      }
+      // Saved contacts remain a fallback; they are never presented as an SRI result.
+      const {data,error} = await supabaseBrowser().from("customers")
+        .select("document_number,legal_name,display_name").in("document_number",documents)
+        .abortSignal(AbortSignal.any([request.signal,AbortSignal.timeout(5000)]));
       if (request.signal.aborted) return;
-      setRucLookup({ ...findSavedCustomerName(data ?? [], documents), ruc });
+      const saved = error ? {status:"absent" as const} : findSavedCustomerName(data??[],documents);
+      if (saved.status === "found") {
+        setClientName(saved.name);
+        setRucLookup({...saved,ruc,source:"HST"});
+      } else if (saved.status === "ambiguous") setRucLookup({status:"ambiguous",ruc});
+      else setRucLookup({status:remoteUnavailable?"error":"absent",ruc});
     } catch {
-      if (!request.signal.aborted) setRucLookup({ status: "error", ruc });
+      if (!request.signal.aborted) setRucLookup({status:"error",ruc});
     } finally {
       if (rucRequest.current === request) rucRequest.current = null;
     }
@@ -2069,7 +2091,10 @@ export default function CotizacionPRO() {
                   <input
                     style={input()}
                     value={clientName}
+                    aria-label="Nombre del cliente"
                     onChange={(e) => {
+                      clearRucLookup();
+                      customerAutoFillRevision.current += 1;
                       setClientName(e.target.value);
                       setCustomerQuery(e.target.value);
                     }}
@@ -2080,6 +2105,7 @@ export default function CotizacionPRO() {
                   <input
                     style={input()}
                     value={clientId}
+                    aria-label="Cédula o RUC del cliente"
                     onChange={(e) => {
                       clearRucLookup();
                       setClientId(e.target.value);
@@ -2092,40 +2118,35 @@ export default function CotizacionPRO() {
                     <button type="button" style={btn()} onClick={consultRuc} disabled={rucLookup?.status === "loading"}>
                       Consultar cédula o RUC
                     </button>
-                    <div style={{ fontSize: 12, marginTop: 4 }}>Busca en los clientes guardados de HST.</div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>Consulta al SRI y completa el nombre automáticamente. Solo busca cuando pulsas el botón.</div>
                     <div role="status" style={{ fontSize: 13, marginTop: 4 }}>
                       {rucLookup?.status === "invalid" && "Escribe una cédula de 10 dígitos o un RUC de 13 dígitos."}
-                      {rucLookup?.status === "loading" && "Buscando en clientes guardados…"}
-                      {rucLookup?.status === "absent" && "No hay coincidencias con nombre en los clientes guardados. Puedes ingresar el nombre manualmente o consultar el RUC en el SRI."}
+                      {rucLookup?.status === "loading" && "Consultando al SRI…"}
+                      {rucLookup?.status === "absent" && "No se encontró ese RUC en la consulta del SRI ni en tus clientes guardados. Una cédula sin RUC registrado puede no tener resultado. Puedes completar los datos manualmente."}
                       {rucLookup?.status === "ambiguous" && "Hay varios clientes guardados con el mismo documento. Verifica el nombre antes de ingresarlo."}
-                      {rucLookup?.status === "error" && "No se pudo consultar la base de clientes. Puedes reintentar o consultar el SRI."}
-                      {rucLookup?.status === "found" && <><strong>{rucLookup.name}</strong>{` · Guardado en HST por ${rucLookup.matchedDocument.length === 10 ? "cédula" : "RUC"}`}</>}
+                      {rucLookup?.status === "error" && "El SRI no respondió. Vuelve a intentar; los datos escritos se conservan."}
+                      {rucLookup?.status === "found" && <>
+                        <strong>{rucLookup.name}</strong>
+                        <div>{rucLookup.source === "SRI" ? "Nombre completado desde el SRI." : "Nombre completado desde tus clientes guardados; no verificado por el SRI en esta consulta."}</div>
+                        {rucLookup.customer?.status && <div>Estado en el SRI: {rucLookup.customer.status}</div>}
+                        {rucLookup.customer?.activity && <div>Actividad: {rucLookup.customer.activity}</div>}
+                        <div>El SRI no proporcionó teléfono ni correo en esta consulta. Puedes completarlos abajo.</div>
+                      </>}
                     </div>
-                    {rucLookup?.status === "found" && (
-                      <button type="button" style={btn()} onClick={() => {
-                        customerAutoFillRevision.current += 1;
-                        setClientName(rucLookup.name);
-                        clearRucLookup();
-                      }}>
-                        Usar nombre
-                      </button>
-                    )}
-                    {rucLookup && "ruc" in rucLookup && (
+                    {rucLookup && "ruc" in rucLookup && rucLookup.status !== "found" && (
                       <div style={{ fontSize: 13, marginTop: 6 }}>
-                        RUC para ingresar en el SRI: <strong>{rucLookup.ruc}</strong>{" · "}
-                        <a href={SRI_RUC_URL} target="_blank" rel="noopener noreferrer">Abrir consulta oficial del SRI</a>
-                        <div>Después de consultar, copia la razón social al campo Nombre.</div>
+                        <a href={SRI_RUC_URL} target="_blank" rel="noopener noreferrer">Consulta oficial del SRI (opcional)</a>
                       </div>
                     )}
                   </div>
                 </div>
                 <div>
                   <label style={label()}>Teléfono</label>
-                  <input style={input()} value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} />
+                  <input style={input()} aria-label="Teléfono del cliente" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} />
                 </div>
                 <div>
                   <label style={label()}>Email</label>
-                  <input style={input()} value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} />
+                  <input style={input()} aria-label="Correo del cliente" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} />
                 </div>
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={label()}>Dirección</label>
